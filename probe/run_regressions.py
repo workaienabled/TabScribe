@@ -25,6 +25,7 @@ CASES += [
     ('ux-toolbar', ['toolbar_test.py'], {}),
     ('ux-bare-shell', ['bare_shell_test.py'], {}),
     ('ux-delete-control', ['delete_control_test.py'], {}),
+    ('ux-window-round-trip', ['window_round_trip_test.py'], {}),
     ('button-row', ['measure_button_row.py'], {}),
     ('prefs', ['prefs_test.py'], {}),
     ('popout', ['popout_test.py'], {}),

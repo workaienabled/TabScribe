@@ -30,7 +30,6 @@ const el = {
   showHidden: document.getElementById('showHiddenBtn'),
   micStatus: document.getElementById('micStatusBtn'),
   cloudWarning: document.getElementById('cloudWarning'),
-  warnUnsaved: document.getElementById('warnUnsaved'),
   clear: document.getElementById('clearBtn'),
   undoBar: document.getElementById('undoBar'),
   undoClear: document.getElementById('undoClearBtn'),
@@ -739,7 +738,6 @@ function applyPrefs(p) {
   el.autoscroll.checked = p.autoscroll;
   el.selectToCopy.checked = p.selectToCopy;
   el.copyToast.checked = p.copyToast;
-  el.warnUnsaved.checked = p.warnUnsaved;
   el.includeMic.checked = p.includeMic;
   setPrefsOpen(p.prefsOpen, { save: false });
   updateModeSummary();
@@ -762,7 +760,6 @@ function savePrefsFromUi() {
     autoscroll: el.autoscroll.checked,
     selectToCopy: el.selectToCopy.checked,
     copyToast: el.copyToast.checked,
-    warnUnsaved: el.warnUnsaved.checked,
     includeMic: el.includeMic.checked,
   });
 }
@@ -781,7 +778,6 @@ prefs.onChange((diff) => {
   if (diff.autoscroll !== undefined) el.autoscroll.checked = diff.autoscroll;
   if (diff.selectToCopy !== undefined) el.selectToCopy.checked = diff.selectToCopy;
   if (diff.copyToast !== undefined) el.copyToast.checked = diff.copyToast;
-  if (diff.warnUnsaved !== undefined) el.warnUnsaved.checked = diff.warnUnsaved;
   if (diff.includeMic !== undefined) {
     el.includeMic.checked = diff.includeMic;
     // Both documents can be alive at once (sidePanel.close() is allowed to
@@ -1378,24 +1374,19 @@ async function copy() {
 
 
 
-/**
- * Chrome's own "You have unsaved progress" dialog.
+/*
+ * There is deliberately no beforeunload handler.
  *
- * Measured on Chrome 151 (probe/spike_unload.py, probe/spike_panel_unload.py):
- * beforeunload produces a real blocking dialog in the side panel, in the pop-out
- * window, and in an extension page in a tab. It needs a prior user interaction,
- * which any session that produced a transcript necessarily has.
+ * An earlier version showed Chrome's "You have unsaved progress" dialog. It was
+ * removed once the transcript became persistent: the prompt warned about a loss
+ * that can no longer happen, and a dialog that fires when nothing is at stake
+ * teaches people to dismiss dialogs. Closing the panel or the window now carries
+ * the transcript forward instead of asking about it.
  *
- * Chrome ignores the returned string and shows its own wording, so there is no
- * custom message to write here.
+ * It also never fired in the side panel — Chrome destroys that document without
+ * running the prompt — so keeping it would have meant a warning that appeared in
+ * one view and not the other.
  */
-window.addEventListener('beforeunload', (event) => {
-  if (!el.warnUnsaved.checked) return undefined;
-  if (!hasUnsavedTranscript()) return undefined;
-  event.preventDefault();
-  event.returnValue = '';
-  return '';
-});
 
 function download() {
   // Download is the one place the microphone appears: the live view and Copy
@@ -1565,7 +1556,6 @@ el.includeMic.addEventListener('change', () => {
 el.micGrant.addEventListener('click', openMicPermissionPage);
 el.clearScreen.addEventListener('click', clearScreen);
 el.showHidden.addEventListener('click', showHidden);
-el.warnUnsaved.addEventListener('change', savePrefsFromUi);
 // The indicator is only actionable in the state that has an action: no grant yet.
 el.micStatus.addEventListener('click', () => {
   if (el.micStatus.dataset.state === 'needs-permission') openMicPermissionPage();
@@ -1654,10 +1644,16 @@ async function previewModelState() {
   const cap = await armCapture();
 
   if (!cap.ok) {
+    // A restored transcript is still here even when this tab cannot be captured
+    // — reopening the panel on the wrong tab must not read as "your text is
+    // gone". Say both things, in that order.
+    const carried = restored ? 'Earlier transcript restored. ' : '';
     if (cap.needsInvocation) {
-      setStatus('Click the TabScribe toolbar icon on the tab you want to transcribe.');
+      setStatus(carried
+        + 'Click the TabScribe toolbar icon on the tab you want to transcribe.');
     } else {
-      setStatus(cap.error || 'Could not capture this tab\'s audio.', true);
+      setStatus(carried + (cap.error || 'Could not capture this tab\'s audio.'),
+                !restored);
     }
     return;
   }

@@ -181,6 +181,42 @@ harness artifact: it is reachable by anyone who presses Record twice quickly.
 The control is now disabled for the duration of the teardown, and
 `delete_control_test.py` asserts it without needing audio.
 
+## Window and panel are a round trip
+
+The pop-out used to be one-way: a tab can only be captured once, so handing off
+to the window left the panel unable to take it back. With the transcript
+persistent, the return leg is mostly free — both views are the same document with
+a different view flag, and both write the same autosave, so reopening the panel
+already picked the text up.
+
+What was missing was the capture claim. `chrome.windows.onRemoved` now releases
+it and re-enables the panel for the tab the window was transcribing, so the
+toolbar icon works again instead of doing nothing.
+
+One real bug surfaced while testing this. On the failure path where the tab
+cannot be captured, `init()` returned early with *"Click the TabScribe toolbar
+icon…"* and never mentioned that a transcript had just been restored — so
+reopening the panel on the wrong tab read as "your text is gone". The restore
+notice now leads that message.
+
+### The close prompt is gone
+
+Removed, not disabled. Once the transcript survives a close, the prompt warned
+about a loss that can no longer happen, and a dialog that fires when nothing is
+at stake is how people learn to dismiss dialogs without reading them. The
+`warnUnsaved` preference went with it.
+
+The quiet signal stays: the Download control is highlighted while there is
+something not yet saved. That is the part worth keeping — it answers "have I
+saved this?" without interrupting anything.
+
+### The Window label is permanent
+
+It is the only text in the control row, and the round trip is the thing users
+need to find, so it survives every width down to 280px. Fitting it back in cost
+horizontal padding on the icon buttons and, below 320px, the ⧉ glyph — never a
+touch target. All eight controls stay 28×28 on one row at 280px.
+
 ## Deliberate limits
 
 No Find, transcript library, built-in AI, recording upload, automatic cloud

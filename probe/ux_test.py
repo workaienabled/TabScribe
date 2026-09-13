@@ -52,7 +52,7 @@ class UI:
         p.write_bytes(base64.b64decode(data))
         return p
 
-    def fixture(self, count=40):
+    def fixture(self, count=40, view='panel'):
         segments = [dict(key=f'0:{i}', text=f'Segment {i + 1}. We discussed the roadmap and agreed to review the release on Friday.',
                          isFinal=True, startedAt=i * 5000) for i in range(count)]
         payload = dict(snapshot=dict(epoch=0, segments=segments), resume=False)
@@ -61,6 +61,11 @@ class UI:
         self.tid, self.sid = self.chrome.new_tab(f'chrome-extension://{self.ext_id}/sidepanel.html?view=window')
         self.chrome.wait_for_js(self.sid, f"document.querySelectorAll('.seg').length === {count}")
         self.chrome.send('Target.closeTarget', targetId=old)
+        if view == 'window':
+            # Leave it as a genuine window-mode document, for tests about the
+            # window itself rather than about panel layout.
+            self.size(460, 780)
+            return
         # Exercise side-panel layout with the same real restored transcript.
         self.js("document.body.classList.remove('view-window')")
         self.size(360)

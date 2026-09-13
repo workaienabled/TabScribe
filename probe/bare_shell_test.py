@@ -68,9 +68,9 @@ def popout_has_a_label(ui):
     ui.check('the pop-out button still carries an accessible name',
              len(shape.get('name', '')) >= 4, shape)
 
-    # Narrow: the word goes, so eight controls still fit without shrinking any
-    # target below 28px. The name must survive, or the icon becomes unusable
-    # with a screen reader precisely where space is tightest.
+    # Narrow: the word STAYS — it is the one label in the row and the round trip
+    # between panel and window is what users need to find. Padding and the icon
+    # glyph give way instead; no target drops below 28px.
     ui.size(300)
     narrow = ui.js("""(() => {
       const b = document.getElementById('popoutBtn');
@@ -82,8 +82,8 @@ def popout_has_a_label(ui):
               w: Math.round(r.width), h: Math.round(r.height),
               overflow: document.documentElement.scrollWidth > innerWidth};
     })()""")
-    ui.check('at a narrow width the pop-out sheds its word rather than the row wrapping',
-             narrow['labelShown'] is False and narrow['overflow'] is False, narrow)
+    ui.check('the Window label survives even at a narrow width',
+             narrow['labelShown'] is True and narrow['overflow'] is False, narrow)
     ui.check('and it keeps its name and a usable target',
              len(narrow['name']) >= 4 and len(narrow['title']) >= 4
              and narrow['w'] >= 28 and narrow['h'] >= 28, narrow)

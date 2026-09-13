@@ -283,9 +283,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 // Forget the pop-out window once it is gone, so the next pop-out opens a new one
 // instead of trying to focus a window that no longer exists.
+//
+// This is also what makes the round trip work. The window and the side panel are
+// the same document with a different view flag, and both write the same autosave,
+// so reopening the panel picks the transcript up. What the panel cannot do by
+// itself is re-capture a tab the closed window still holds a claim on — so the
+// claim is released here, at the moment the window goes away.
 chrome.windows.onRemoved.addListener(async (windowId) => {
   const stored = await chrome.storage.session.get(WINDOW_KEY);
   if (stored[WINDOW_KEY] === windowId) {
     await chrome.storage.session.remove(WINDOW_KEY);
+    // Re-enable the panel for the tab it was transcribing, so the toolbar icon
+    // opens it again rather than doing nothing.
+    const target = await chrome.storage.session.get(TARGET_KEY);
+    const tabId = target[TARGET_KEY];
+    if (tabId !== undefined) {
+      try {
+        await chrome.sidePanel.setOptions({
+          tabId,
+          path: 'sidepanel.html',
+          enabled: true,
+        });
+      } catch (e) {
+        // The tab may be gone too; nothing to restore in that case.
+      }
+    }
   }
 });

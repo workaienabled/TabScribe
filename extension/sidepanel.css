@@ -91,14 +91,18 @@ button.mic-status[data-state="blocked"] .mic-slash { display: block; }
   .controls { gap: 2px; padding: 8px 6px; }
 }
 
-/* Eight controls do not fit a narrow panel with a text label among them. The
-   pop-out sheds its word first: it is the only control whose name is also
-   reachable elsewhere (the gear opens the same window), and it keeps its
-   accessible name and tooltip either way. Targets stay 28x28 — shrinking them
-   is the trade the measurement gate exists to refuse. */
-@media (max-width: 360px) {
-  .popout-label { display: none; }
-  button.popout { padding: 5px; width: 28px; }
+/* The Window control keeps its word at every width — it is the one label in the
+   row, and the round trip between panel and window is the thing users need to
+   find. What gives instead is horizontal padding on the icon buttons: they are
+   28px targets either way, so the row loses whitespace, not usability. */
+@media (max-width: 400px) {
+  .controls { gap: 2px; padding: 8px 6px; }
+  button.icon-btn { padding: 4px; }
+  button.popout { padding: 5px 6px; gap: 4px; }
+}
+@media (max-width: 320px) {
+  .controls { gap: 1px; padding: 8px 4px; }
+  button.popout .popout-icon { display: none; }
 }
 
 /* flex: 0 1 auto, not none: body is overflow:hidden, so an optional panel that
