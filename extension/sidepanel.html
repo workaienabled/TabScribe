@@ -51,6 +51,10 @@
     </fieldset>
     <fieldset id="readingPrefs">
       <legend>Reading</legend>
+      <div class="reading-options">
+        <label class="field-label">Appearance<select id="themeSel"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+        <label class="field-label">Text size<select id="fontSizeSel"><option value="14">Small · 14</option><option value="16" selected>Default · 16</option><option value="18">Large · 18</option><option value="20">Largest · 20</option></select></label>
+      </div>
       <label class="check"><input type="checkbox" id="tsToggle"><span>Timestamps<small>Show when each segment was heard.</small></span></label>
       <label class="check"><input type="checkbox" id="autoscroll" checked><span>Auto-scroll<small>Follow new text while you're at the bottom.</small></span></label>
     </fieldset>

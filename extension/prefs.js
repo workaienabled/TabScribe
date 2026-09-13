@@ -31,9 +31,17 @@ export const DEFAULTS = {
   // Whether the preferences group is expanded. Remembered so the panel opens the
   // way it was left rather than snapping shut every time.
   prefsOpen: false,
+  theme: 'system',
+  fontSize: 16,
   windowWidth: 460,
   windowHeight: 780,
 };
+
+function validChoice(key, value) {
+  if (key === 'theme') return ['system', 'light', 'dark'].includes(value);
+  if (key === 'fontSize') return [14, 16, 18, 20].includes(value);
+  return typeof value === typeof DEFAULTS[key];
+}
 
 let cache = { ...DEFAULTS };
 let loaded = false;
@@ -45,7 +53,7 @@ export async function load() {
     const stored = got?.[KEY] || {};
     const merged = { ...DEFAULTS };
     for (const k of Object.keys(DEFAULTS)) {
-      if (stored[k] !== undefined && typeof stored[k] === typeof DEFAULTS[k]) {
+      if (stored[k] !== undefined && validChoice(k, stored[k])) {
         merged[k] = stored[k];
       }
     }

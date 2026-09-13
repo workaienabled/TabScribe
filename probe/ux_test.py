@@ -113,9 +113,39 @@ def shell(ui):
     ui.shot('shell-transcript')
 
 
+def reading(ui):
+    exists = ui.js("!!document.getElementById('themeSel') && !!document.getElementById('fontSizeSel')")
+    ui.check('reading controls exist', exists)
+    if not exists:
+        return
+    defaults = ui.js("({theme: document.getElementById('themeSel').value, size: document.getElementById('fontSizeSel').value})")
+    ui.check('system theme and 16px are defaults', defaults == {'theme':'system', 'size':'16'}, defaults)
+    ui.js("""(() => {
+      const t = document.getElementById('themeSel'); t.value = 'dark'; t.dispatchEvent(new Event('change'));
+      const s = document.getElementById('fontSizeSel'); s.value = '20'; s.dispatchEvent(new Event('change'));
+    })()""")
+    ui.check('reading size applies immediately', ui.js("getComputedStyle(document.getElementById('transcript')).fontSize === '20px'"))
+    dark = ui.js("getComputedStyle(document.body).backgroundColor")
+    ui.js("document.getElementById('themeSel').value='light'; document.getElementById('themeSel').dispatchEvent(new Event('change'))")
+    light = ui.js("getComputedStyle(document.body).backgroundColor")
+    ui.check('light and dark themes actually differ', light != dark, {'light':light, 'dark':dark})
+    time.sleep(.3)
+    ui.chrome.kill()
+    ui.chrome = PipeChrome(ui.temp.name, fresh=False, extra_args=['--enable-unsafe-extension-debugging'])
+    ui.chrome.launch()
+    ui.chrome.send('Extensions.loadUnpacked', path=str(ROOT / 'extension'))
+    ui.tid, ui.sid = ui.chrome.new_tab(f'chrome-extension://{ui.ext_id}/sidepanel.html')
+    ui.chrome.wait_for_js(ui.sid, "document.getElementById('fontSizeSel').value === '20'")
+    ui.check('theme and text size survive Chrome restart', ui.js("document.getElementById('themeSel').value === 'light' && getComputedStyle(document.getElementById('transcript')).fontSize === '20px'"))
+    ui.js("chrome.storage.local.set({prefs:{theme:'invalid', fontSize:9000}})")
+    ui.chrome.send('Page.reload', session_id=ui.sid)
+    ui.chrome.wait_for_js(ui.sid, "document.getElementById('status').textContent.length > 0")
+    ui.check('invalid stored choices fall back safely', ui.js("document.getElementById('themeSel').value === 'system' && getComputedStyle(document.getElementById('transcript')).fontSize === '16px'"))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('stage', choices=['shell'])
+    parser.add_argument('stage', choices=['shell', 'reading'])
     args = parser.parse_args()
     ui = UI()
     try:

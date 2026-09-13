@@ -34,6 +34,8 @@ const el = {
   copyToast: document.getElementById('copyToast'),
   prefsBtn: document.getElementById('prefsBtn'),
   prefsClose: document.getElementById('prefsCloseBtn'),
+  theme: document.getElementById('themeSel'),
+  fontSize: document.getElementById('fontSizeSel'),
   modeSummary: document.getElementById('modeSummary'),
   stateLabel: document.getElementById('stateLabel'),
   prefsPanel: document.getElementById('prefsPanel'),
@@ -497,8 +499,16 @@ async function retryModel() {
 
 /* ---------------------------------------------------------------- preferences */
 
+function applyReadingPrefs(p) {
+  el.theme.value = ['system', 'light', 'dark'].includes(p.theme) ? p.theme : 'system';
+  el.fontSize.value = String([14, 16, 18, 20].includes(p.fontSize) ? p.fontSize : 16);
+  document.documentElement.dataset.theme = el.theme.value;
+  document.documentElement.style.setProperty('--reading-size', `${el.fontSize.value}px`);
+}
+
 /** Push stored values onto the controls. Call BEFORE anything reads them. */
 function applyPrefs(p) {
+  applyReadingPrefs(p);
   el.lang.value = p.lang;
   el.localOnly.checked = p.localOnly;
   el.timestamps.checked = p.timestamps;
@@ -533,6 +543,7 @@ function savePrefsFromUi() {
 // store. Without this, changing a toggle in one and then in the other would
 // clobber the first change.
 prefs.onChange((diff) => {
+  if (diff.theme !== undefined || diff.fontSize !== undefined) applyReadingPrefs(prefs.get());
   if (diff.lang !== undefined) el.lang.value = diff.lang;
   if (diff.localOnly !== undefined) el.localOnly.checked = diff.localOnly;
   if (diff.timestamps !== undefined) {
@@ -888,6 +899,13 @@ el.retryModel.addEventListener('click', retryModel);
 el.prefsBtn.addEventListener('click', () => {
   setPrefsOpen(el.prefsPanel.hidden);
 });
+for (const control of [el.theme, el.fontSize]) {
+  control.addEventListener('change', () => {
+    const values = {theme: el.theme.value, fontSize: Number(el.fontSize.value)};
+    applyReadingPrefs(values);
+    prefs.set(values);
+  });
+}
 el.prefsClose.addEventListener('click', () => {
   setPrefsOpen(false);
   el.prefsBtn.focus();

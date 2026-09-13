@@ -64,6 +64,8 @@ h2 { margin: 0; font-size: 15px; font-weight: 650; }
 fieldset { border: 0; padding: 12px 0 6px; margin: 0; min-width: 0; }
 fieldset + fieldset { border-top: 1px solid var(--border); margin-top: 12px; }
 legend { padding: 0; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+.reading-options { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.reading-options select { margin-top: 6px; }
 .field-label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
 select { width: 100%; min-height: 36px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
 .check { display: flex; align-items: flex-start; gap: 10px; padding: 9px 0; cursor: pointer; }
