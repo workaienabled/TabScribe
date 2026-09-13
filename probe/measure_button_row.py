@@ -1,8 +1,13 @@
-"""Measure whether the top button row fits on one line, at realistic panel widths.
+"""Measure whether the top control row fits on one line, at realistic panel widths.
 
-The claim being tested is literal: all four top buttons on a single row. Chrome's
+The claim being tested is literal: every top control on a single row. Chrome's
 side panel is narrow and user-resizable, so this checks a range of widths rather
 than the one width a screenshot happens to use.
+
+This matters more since the row grew from four controls to seven (record, copy,
+download, clear screen, microphone, pop-out, preferences). The four-button layout
+already needed icon-only controls to fit 300px, so seven is a real constraint and
+this gate is the thing that proves it rather than a screenshot at one width.
 
 Rows are detected by offsetTop: buttons sharing a row share a top edge. Prints one
 line per width with the number of distinct rows.
@@ -37,7 +42,8 @@ def unpacked_extension_id(path):
 
 MEASURE_JS = """
 (() => {
-  const ids = ['startBtn', 'stopBtn', 'popoutBtn', 'prefsBtn'];
+  const ids = ['recordBtn', 'copyBtn', 'downloadBtn', 'clearScreenBtn',
+               'micStatusBtn', 'popoutBtn', 'prefsBtn'];
   const out = [];
   for (const id of ids) {
     const e = document.getElementById(id);

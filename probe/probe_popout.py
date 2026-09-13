@@ -147,7 +147,7 @@ def main():
             print("FATAL: side panel never opened")
             return
         panel_sid = chrome.attach(panel["targetId"])
-        chrome.wait_for_js(panel_sid, "!!document.getElementById('startBtn')", timeout=30)
+        chrome.wait_for_js(panel_sid, "!!document.getElementById('recordBtn')", timeout=30)
         time.sleep(2)
         findings["side_panel_status"] = panel_status(chrome, panel_sid)
         print(f"\n1. side panel armed: {findings['side_panel_status']!r}", flush=True)
@@ -178,7 +178,7 @@ def main():
             return
 
         popup_sid = chrome.attach(popup["targetId"])
-        chrome.wait_for_js(popup_sid, "!!document.getElementById('startBtn')", timeout=30)
+        chrome.wait_for_js(popup_sid, "!!document.getElementById('recordBtn')", timeout=30)
         time.sleep(3)
         findings["popup_status_while_panel_holds"] = panel_status(chrome, popup_sid)
         print(f"   popup status (panel still capturing): "

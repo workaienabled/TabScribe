@@ -22,6 +22,8 @@ CASES += [
     ('ux-mic-permission', ['mic_permission_test.py'], {}),
     ('ux-mic-grant', ['mic_grant_test.py'], {}),
     ('first-load', ['first_load_test.py'], {}),
+    ('ux-toolbar', ['toolbar_test.py'], {}),
+    ('button-row', ['measure_button_row.py'], {}),
     ('prefs', ['prefs_test.py'], {}),
     ('popout', ['popout_test.py'], {}),
     ('e2e-sample1', ['e2e_full.py'], {}),

@@ -36,6 +36,14 @@ try:
     # The microphone option, which lives with the other occasional settings.
     ui.js("document.getElementById('includeMic').scrollIntoView({block:'nearest'})")
     ui.shot('focused-mic-option')
+    # The clear-screen state: nothing on screen, but the download still has it.
+    ui.js("document.getElementById('prefsBtn').click()")
+    ui.size(420, 820)
+    ui.js("document.getElementById('clearScreenBtn').click()")
+    time.sleep(.25)
+    ui.shot('focused-cleared-screen')
+    ui.js("document.getElementById('showHiddenBtn').click()")
+    time.sleep(.15)
     # The page that actually asks for the microphone, in a tab. Shot from a
     # throwaway target so the panel session below is untouched.
     panel_tid, panel_sid = ui.tid, ui.sid

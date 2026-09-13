@@ -158,7 +158,7 @@ def main():
             # Guard against a vacuous pass: the page must be skipped because the
             # grant exists, not because a flag leaked in from an earlier profile.
             tid, sid = chrome.new_tab(f'chrome-extension://{ext_id}/sidepanel.html')
-            chrome.wait_for_js(sid, "!!document.getElementById('startBtn')", timeout=30)
+            chrome.wait_for_js(sid, "!!document.getElementById('recordBtn')", timeout=30)
             why = chrome.evaluate(sid, """(async () => {
               let state = 'unknown';
               try { state = (await navigator.permissions.query({name:'microphone'})).state; }

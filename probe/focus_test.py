@@ -28,20 +28,21 @@ def focus(ui):
     ui.check('no app Find UI or extra transcript toolbar', ui.js("!document.getElementById('findBtn') && !document.getElementById('findPanel') && !document.querySelector('.transcript-tools')"))
     ui.check('search module removed rather than hidden', not (ROOT/'extension/transcript-search.js').exists())
     ui.check('browser Find shortcut is not intercepted', ui.js("(() => { const e=new KeyboardEvent('keydown',{key:'f',ctrlKey:true,bubbles:true,cancelable:true}); document.dispatchEvent(e); return !e.defaultPrevented; })()"))
-    ui.check('footer contains only copy and download', ui.js("JSON.stringify(Array.from(document.querySelectorAll('.footer button')).map(e=>e.id)) === JSON.stringify(['copyBtn','downloadBtn'])"))
+    ui.check('the footer holds status only, no duplicate actions', ui.js("document.querySelectorAll('.footer button').length === 0"))
+    ui.check('copy and download are in the one control row', ui.js("(() => { const r=document.querySelector('.controls'); return r.contains(document.getElementById('copyBtn')) && r.contains(document.getElementById('downloadBtn')); })()"))
     ui.check('Clear is an occasional action inside Preferences', ui.js("document.getElementById('prefsPanel').contains(document.getElementById('clearBtn'))"))
-    ui.check('download is named explicitly', ui.js("document.getElementById('downloadBtn').textContent.trim() === 'Download'"))
+    ui.check('download is named explicitly', ui.js("document.getElementById('downloadBtn').getAttribute('aria-label') === 'Download transcript'"))
     ui.check('word count is visible and compact', ui.js("(() => { const r=document.getElementById('wordCount').getBoundingClientRect(); return r.height>=10 && r.height<=18; })()"))
     ui.fixture(3)
     ui.capture_store()
     # The fixture restores a stopped store. Enable the control only to exercise
     # the real Stop handler's output wording; this is not an audio-capture test.
-    ui.js("document.getElementById('stopBtn').disabled=false")
-    click(ui, 'stopBtn')
+    ui.js("document.getElementById('recordBtn').setAttribute('aria-pressed','true')")
+    click(ui, 'recordBtn')
     ui.chrome.wait_for_js(ui.sid, "document.getElementById('status').textContent.startsWith('Stopped.')")
     stopped = ui.js("document.getElementById('status').textContent")
     ui.check('Stop points to the visible Download action', 'Download' in stopped and 'Save' not in stopped, stopped)
-    ui.check('unselected copy action states full scope', ui.js("document.getElementById('copyBtn').textContent === 'Copy all'"))
+    ui.check('unselected copy action states full scope', ui.js("document.getElementById('copyBtn').getAttribute('aria-label') === 'Copy transcript'"))
     ui.chrome.send('Browser.grantPermissions', permissions=['clipboardReadWrite','clipboardSanitizedWrite'])
     ui.chrome.send('Target.activateTarget', targetId=ui.tid)
     ui.chrome.send('Emulation.setFocusEmulationEnabled', session_id=ui.sid, enabled=True)
@@ -54,11 +55,11 @@ def focus(ui):
       document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
       return s.toString();
     })()""")
-    ui.chrome.wait_for_js(ui.sid, "document.getElementById('copyBtn').textContent === 'Copy selection'")
+    ui.chrome.wait_for_js(ui.sid, "document.getElementById('copyBtn').getAttribute('aria-label') === 'Copy selected passage'")
     time.sleep(.25)
     copied = ui.js('navigator.clipboard.readText()')
     ui.check('select-to-copy puts the exact passage on the real clipboard', bool(selected) and copied==selected, {'selected':selected,'clipboard':copied})
-    ui.check('copy label describes the selected passage', ui.js("document.getElementById('copyBtn').textContent === 'Copy selection'"))
+    ui.check('copy label describes the selected passage', ui.js("document.getElementById('copyBtn').getAttribute('aria-label') === 'Copy selected passage'"))
     ui.js("document.getElementById('copyToast').checked=false; document.getElementById('copyToast').dispatchEvent(new Event('change')); window.statusBeforeCopy=document.getElementById('status').textContent")
     time.sleep(1.2)
     ui.js("navigator.clipboard.writeText('__MANUAL_SENTINEL__')")
@@ -68,7 +69,7 @@ def focus(ui):
     # The toggle silences the toast, which fires on every selection while reading.
     # It must not silence an action the user explicitly pressed: with no toast and
     # no status, Copy looked broken. Auto-copy stays quiet (asserted in prefs_test).
-    ui.check('manual copy respects the toast toggle but still acknowledges itself', ui.js("!document.getElementById('toast').classList.contains('show') && /copied/i.test(document.getElementById('status').textContent) && document.getElementById('copyBtn').textContent === 'Copy selection'"))
+    ui.check('manual copy respects the toast toggle but still acknowledges itself', ui.js("!document.getElementById('toast').classList.contains('show') && /copied/i.test(document.getElementById('status').textContent) && document.getElementById('copyBtn').getAttribute('aria-label') === 'Copy selected passage'"))
     whole = ui.js('fixtureStore.toText()')
     with tempfile.TemporaryDirectory(prefix='tabscribe-download-test-') as directory:
         for timestamps in [False, True]:
@@ -100,10 +101,10 @@ def focus(ui):
     click(ui,'copyBtn')
     time.sleep(.2)
     ui.check('Copy all copies the whole transcript with no selection', ui.js('navigator.clipboard.readText()')==whole)
-    ui.check('manual copy uses the optional short Copied toast', ui.js("document.getElementById('toast').classList.contains('show') && document.getElementById('toast').textContent==='Copied' && document.getElementById('copyBtn').textContent==='Copy all'"))
+    ui.check('manual copy uses the optional short Copied toast', ui.js("document.getElementById('toast').classList.contains('show') && document.getElementById('toast').textContent==='Copied' && document.getElementById('copyBtn').getAttribute('aria-label')==='Copy transcript'"))
     for width in [280,320,360,640]:
         ui.size(width,620)
-        ui.check(f'copy/download footer fits at {width}px', ui.js("(() => {const buttons=[...document.querySelectorAll('.footer button')].map(e=>e.getBoundingClientRect());return buttons.every(r=>r.x>=0 && r.right<=innerWidth) && document.documentElement.scrollWidth<=innerWidth && Math.max(...buttons.map(r=>r.top))<Math.min(...buttons.map(r=>r.bottom));})()"))
+        ui.check(f'copy/download stay on screen at {width}px', ui.js("(() => {const buttons=[...document.querySelectorAll('.controls button')].map(e=>e.getBoundingClientRect());return buttons.every(r=>r.x>=0 && r.right<=innerWidth) && document.documentElement.scrollWidth<=innerWidth && Math.max(...buttons.map(r=>r.top))<Math.min(...buttons.map(r=>r.bottom));})()"))
     ui.fixture(80)
     ui.size(360, 420)
     ui.js("document.getElementById('transcript').scrollTop=0")

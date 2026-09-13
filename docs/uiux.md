@@ -40,6 +40,54 @@ navigation, and recovery. `probe/focus_test.py` checks the meeting copy/download
 flow against real clipboard contents and downloaded files. Audio WER suites remain
 separate. Logs go to `artifacts/uiux/`.
 
+## The minimal toolbar
+
+One row, icons only, seven controls: Record, Copy, Download, Clear screen, then
+microphone status, pop-out, and the gear. Measured at 280–640px in
+`probe/measure_button_row.py`; the four-button labelled row it replaced needed
+430px to fit on one line, so this is both denser and less crowded.
+
+- **Record is one toggle.** Start and Stop were mutually exclusive buttons, so a
+  single control with a state is smaller and removes the "which one is live?"
+  question. It renames itself (`aria-pressed` plus the accessible name) because a
+  toggle that looks the same in both states is a button people press twice. It
+  becomes pressed and stays *enabled* the moment it is clicked: a first-run model
+  download takes minutes, and a disabled control still labelled "Start" for that
+  whole time tells the user nothing and offers no way out.
+- **Clear screen is not Delete.** It hides segment keys from `render()` and never
+  touches the store, so Copy, the word count, and Download are unaffected. That
+  divergence is visible rather than implied: a line above the transcript reports
+  how much is hidden and offers **Show**. Without it, "cleared" and "deleted"
+  would look identical and the download would surprise people. Delete transcript
+  stays behind the gear, where the destructive action belongs.
+- **Icon targets never shrink below 28x28.** The first attempt shed width at
+  narrow panels by shrinking the buttons to 26px, which `ux_test.py` caught: the
+  project's floor is 28px, and the gaps give up space instead.
+
+## The unsaved-work warning
+
+Chrome's own "You have unsaved progress" dialog, from `beforeunload`. Measured
+before it was designed (`probe/spike_unload.py`, `probe/spike_panel_unload.py`,
+Chrome 151): it produces a real blocking dialog in the **side panel**, in the
+pop-out window, and in an extension page in a tab — the panel was the uncertain
+one, and it works. Chrome ignores any custom string, so there is no message to
+write.
+
+It is armed by comparing the transcript against the exact text last written to
+disk, not by a dirty flag. A flag would go stale after Undo, after a hand-off, or
+after the microphone merged text in, and would then either nag about nothing or
+stay silent over a lost meeting. Downloading disarms it; speech after the
+download re-arms it. A footer dot shows the same state, and the gear can turn the
+warning off.
+
+## The microphone indicator
+
+Five states, because the remedies differ: `off`, `needs-permission`, `recording`,
+`blocked`, `error`. Each sets `data-state`, the accessible name, and the tooltip
+together, so the meaning never rests on colour alone. Only `needs-permission` is
+actionable — pressing it opens `mic-permission.html`, the one surface that can
+raise Chrome's prompt. The others are status, and are disabled.
+
 ## Deliberate limits
 
 No Find, transcript library, built-in AI, recording upload, automatic cloud

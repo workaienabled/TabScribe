@@ -236,7 +236,7 @@ def main():
         if not panel:
             raise SystemExit(1)
         panel_sid = chrome.attach(panel["targetId"])
-        chrome.wait_for_js(panel_sid, "!!document.getElementById('startBtn')", timeout=30)
+        chrome.wait_for_js(panel_sid, "!!document.getElementById('recordBtn')", timeout=30)
 
         # --- 0. preferences disclosure ---------------------------------------
         print("\n=== PREFERENCES BUTTON ===", flush=True)
@@ -284,7 +284,7 @@ def main():
         # widths a Chrome side panel actually gets used at.
         row = chrome.evaluate(panel_sid, """
         (() => {
-          const ids = ['startBtn', 'stopBtn', 'popoutBtn', 'prefsBtn'];
+          const ids = ['recordBtn', 'copyBtn', 'downloadBtn', 'clearScreenBtn', 'micStatusBtn', 'popoutBtn', 'prefsBtn'];
           const rects = ids.map(id => {
             const e = document.getElementById(id);
             const r = e.getBoundingClientRect();
@@ -345,7 +345,7 @@ def main():
 
         # Transcribe a little so there is text to select.
         print("\n=== TRANSCRIBE ===", flush=True)
-        chrome.evaluate(panel_sid, "document.getElementById('startBtn').click()",
+        chrome.evaluate(panel_sid, "document.getElementById('recordBtn').click()",
                         await_promise=False)
         deadline = time.time() + 45
         while time.time() < deadline:
@@ -379,7 +379,7 @@ def main():
             if seg.get("words", 0) >= 16:
                 break
             time.sleep(0.3)
-        chrome.evaluate(panel_sid, "document.getElementById('stopBtn').click()",
+        chrome.evaluate(panel_sid, "document.getElementById('recordBtn').click()",
                         await_promise=False)
         time.sleep(2)
         seg = chrome.evaluate(panel_sid, seg_words_js, await_promise=False)
@@ -562,7 +562,7 @@ def main():
         checks.add("side panel reopens after restart", bool(panel2))
         if panel2:
             psid2 = chrome2.attach(panel2["targetId"])
-            chrome2.wait_for_js(psid2, "!!document.getElementById('startBtn')", timeout=30)
+            chrome2.wait_for_js(psid2, "!!document.getElementById('recordBtn')", timeout=30)
             time.sleep(1.5)
             restored = chrome2.evaluate(psid2, """
             (() => ({

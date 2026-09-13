@@ -189,7 +189,7 @@ def main():
         panel = panel_target(chrome) or open_panel(chrome)
         if panel:
             psid = chrome.attach(panel["targetId"])
-            chrome.wait_for_js(psid, "!!document.getElementById('startBtn')", timeout=20)
+            chrome.wait_for_js(psid, "!!document.getElementById('recordBtn')", timeout=20)
             try:
                 chrome.evaluate(psid, "window.close(); 'called'", await_promise=False)
             except Exception as e:  # noqa: BLE001 - target may die mid-call

@@ -21,10 +21,16 @@ import * as prefs from './prefs.js';
 import { MicTranscriber, mergeTranscripts, MIC_MESSAGES, stopStream } from './mic.js';
 
 const el = {
-  start: document.getElementById('startBtn'),
-  stop: document.getElementById('stopBtn'),
+  record: document.getElementById('recordBtn'),
   copy: document.getElementById('copyBtn'),
   download: document.getElementById('downloadBtn'),
+  clearScreen: document.getElementById('clearScreenBtn'),
+  hiddenNotice: document.getElementById('hiddenNotice'),
+  hiddenCount: document.getElementById('hiddenCount'),
+  showHidden: document.getElementById('showHiddenBtn'),
+  micStatus: document.getElementById('micStatusBtn'),
+  unsavedDot: document.getElementById('unsavedDot'),
+  warnUnsaved: document.getElementById('warnUnsaved'),
   clear: document.getElementById('clearBtn'),
   undoBar: document.getElementById('undoBar'),
   undoClear: document.getElementById('undoClearBtn'),
@@ -272,13 +278,79 @@ function applyRow(entry, seg, showTs) {
   entry.showTs = showTs;
 }
 
+/* ------------------------------------------------------- screen vs. store */
+
+/**
+ * Segment keys hidden from the VIEW only.
+ *
+ * The gear's Delete removes text from the store, so it leaves the download too.
+ * This is the other thing people want: clear the screen to stop scrolling
+ * through an hour of meeting, while the file you download at the end still has
+ * all of it. The store is never touched here — only what render() draws.
+ */
+let screenHidden = new Set();
+
+function hiddenNoticeRefresh(store) {
+  const hiding = screenHidden.size > 0;
+  el.hiddenNotice.hidden = !hiding;
+  if (!hiding || !store) return;
+  const words = store.liveSegments()
+    .filter((s) => screenHidden.has(s.key))
+    .reduce((n, s) => n + s.text.split(/\s+/).filter(Boolean).length, 0);
+  el.hiddenCount.textContent = `${words} ${words === 1 ? 'word' : 'words'}`;
+}
+
+function clearScreen() {
+  if (!lastStore) return;
+  for (const seg of lastStore.liveSegments()) screenHidden.add(seg.key);
+  // Drop the rows outright: keeping them hidden would leave them selectable and
+  // copyable, which is not what "cleared" means.
+  for (const [key, entry] of nodes) {
+    if (screenHidden.has(key)) { entry.row.remove(); nodes.delete(key); }
+  }
+  render(lastStore);
+  confirmAction('Screen cleared', 'Screen cleared. The text is still in the download.');
+}
+
+function showHidden() {
+  screenHidden = new Set();
+  if (lastStore) render(lastStore);
+}
+
+/* ------------------------------------------------------------ unsaved work */
+
+/**
+ * Whether the transcript holds anything that has not been downloaded.
+ *
+ * Compared against the exact text last written to disk rather than a dirty flag:
+ * a flag would go stale after Undo, after a hand-off, or after the microphone
+ * merged extra text in, and would then either nag about nothing or stay silent
+ * over a lost meeting.
+ */
+let savedText = '';
+
+function hasUnsavedTranscript() {
+  if (!lastStore || lastStore.isEmpty()) return false;
+  return transcriptForSaving() !== savedText;
+}
+
+function refreshUnsavedUi() {
+  el.unsavedDot.hidden = !hasUnsavedTranscript();
+}
+
 function render(store) {
   lastStore = store;
-  const segs = store.liveSegments();
+  // Hidden keys are filtered here, and only here: the store still holds them, so
+  // Copy, Download, and the word count are unaffected by clearing the screen.
+  const all = store.liveSegments();
+  const segs = screenHidden.size ? all.filter((s) => !screenHidden.has(s.key)) : all;
 
-  el.empty.style.display = segs.length === 0 ? '' : 'none';
+  el.empty.style.display = all.length === 0 ? '' : 'none';
   el.words.textContent = `${store.wordCount()} words`;
   el.copy.disabled = el.download.disabled = el.clear.disabled = store.isEmpty();
+  el.clearScreen.disabled = segs.length === 0;
+  hiddenNoticeRefresh(store);
+  refreshUnsavedUi();
 
   const showTs = el.timestamps.checked;
   const sel = transcriptSelection();
@@ -315,7 +387,10 @@ function render(store) {
 function refreshSelectionUi() {
   const sel = transcriptSelection();
   const selecting = !!sel;
-  el.copy.textContent = selecting ? 'Copy selection' : 'Copy all';
+  el.copy.setAttribute('aria-label', selecting ? 'Copy selected passage' : 'Copy transcript');
+  el.copy.title = selecting
+    ? 'Copy the passage you selected'
+    : 'Copy the whole transcript, or only the passage you select';
   if (selecting) el.copy.removeAttribute('aria-describedby');
   else el.copy.setAttribute('aria-describedby', 'wordCount');
   el.transcript.classList.toggle('holding', selecting);
@@ -548,12 +623,12 @@ async function useCloudInstead() {
   hideModelPanel();
   setStatus('Switched to Chrome\'s cloud recognition. Audio is sent to Google.');
   // Reached from the notice's own button, so the activation is still live.
-  if (!el.start.disabled) await start({ gesture: true });
+  if (!el.record.disabled) await start({ gesture: true });
 }
 
 async function retryModel() {
   el.retryModel.hidden = true;
-  if (!el.start.disabled) await start({ gesture: true });
+  if (!el.record.disabled) await start({ gesture: true });
 }
 
 /* ---------------------------------------------------------------- preferences */
@@ -574,6 +649,7 @@ function applyPrefs(p) {
   el.autoscroll.checked = p.autoscroll;
   el.selectToCopy.checked = p.selectToCopy;
   el.copyToast.checked = p.copyToast;
+  el.warnUnsaved.checked = p.warnUnsaved;
   el.includeMic.checked = p.includeMic;
   setPrefsOpen(p.prefsOpen, { save: false });
   updateModeSummary();
@@ -596,6 +672,7 @@ function savePrefsFromUi() {
     autoscroll: el.autoscroll.checked,
     selectToCopy: el.selectToCopy.checked,
     copyToast: el.copyToast.checked,
+    warnUnsaved: el.warnUnsaved.checked,
     includeMic: el.includeMic.checked,
   });
 }
@@ -614,6 +691,7 @@ prefs.onChange((diff) => {
   if (diff.autoscroll !== undefined) el.autoscroll.checked = diff.autoscroll;
   if (diff.selectToCopy !== undefined) el.selectToCopy.checked = diff.selectToCopy;
   if (diff.copyToast !== undefined) el.copyToast.checked = diff.copyToast;
+  if (diff.warnUnsaved !== undefined) el.warnUnsaved.checked = diff.warnUnsaved;
   if (diff.includeMic !== undefined) {
     el.includeMic.checked = diff.includeMic;
     // Both documents can be alive at once (sidePanel.close() is allowed to
@@ -647,6 +725,24 @@ function ensureTranscriber() {
     },
   });
   return transcriber;
+}
+
+/**
+ * The single Record control's state.
+ *
+ * Start and Stop used to be two buttons that were never both usable. One toggle
+ * is smaller and removes the "which one is live?" question, but it only works if
+ * the control renames itself: a toggle that looks identical in both states is a
+ * button people press twice. aria-pressed carries the state for screen readers,
+ * the icon carries it visually, and the accessible name says what the NEXT press
+ * will do.
+ */
+function setRecording(on) {
+  el.record.setAttribute('aria-pressed', on ? 'true' : 'false');
+  el.record.setAttribute('aria-label', on ? 'Stop recording' : 'Start recording');
+  el.record.title = on
+    ? 'Stop recognition and keep the transcript'
+    : 'Start transcribing this tab';
 }
 
 /**
@@ -739,8 +835,8 @@ async function popOut() {
       ? 'Moved to its own window.'
       : 'Moved to its own window. You can close this panel.';
     el.status.classList.remove('error');
-    el.start.disabled = true;
-    el.stop.disabled = true;
+    el.record.disabled = true;
+    setRecording(false);
     el.popout.disabled = false;
     setPopoutLabel('Focus window');
   } catch (e) {
@@ -782,7 +878,7 @@ async function refreshTarget() {
  * reporting that as a refusal is the bug this whole path exists to avoid.
  */
 async function start({ gesture = false } = {}) {
-  el.start.disabled = true;
+  el.record.disabled = true;
   // FIRST, synchronously: the user's click is a live gesture right now, and
   // everything below this line awaits, which would destroy it.
   //
@@ -796,6 +892,12 @@ async function start({ gesture = false } = {}) {
     ? requestMicStream() : null;
   setState('starting');
   setStatus('Preparing…');
+  // The toggle reads as recording from the moment the user presses it, and stays
+  // usable throughout. A first-run model download takes minutes, and a control
+  // that is disabled and still labelled "Start" for that whole time gives the
+  // user no way to change their mind and no idea what state they are in.
+  setRecording(true);
+  el.record.disabled = false;
 
   try {
     const lang = el.lang.value;
@@ -846,7 +948,8 @@ async function start({ gesture = false } = {}) {
 
     transcriber.start(graph.track, { lang, processLocally: localOnly });
 
-    el.stop.disabled = false;
+    setRecording(true);
+    el.record.disabled = false;
     setStatus('Listening. Select any text to copy part of it.');
 
     // Strictly after the meeting transcription is live, and never awaited into
@@ -868,8 +971,8 @@ async function start({ gesture = false } = {}) {
       try { await transcriber.stop({ flushMs: 0 }); } catch (e2) { /* best effort */ }
     }
     await teardown();
-    el.start.disabled = false;
-    el.stop.disabled = true;
+    el.record.disabled = false;
+    setRecording(false);
   }
 }
 
@@ -890,7 +993,7 @@ async function teardown() {
 }
 
 async function stop() {
-  el.stop.disabled = true;
+  setRecording(false);
   setStatus('Finishing…');
   // Stop the microphone first and independently; its text is already banked in
   // its own store, and a failure here must not delay finishing the meeting.
@@ -905,7 +1008,7 @@ async function stop() {
   // The capture stays armed so Start works again without another toolbar click.
   setState('idle');
   setStatus('Stopped. Transcript kept — use Copy or Download.');
-  el.start.disabled = false;
+  el.record.disabled = false;
 }
 
 // Release the capture when the panel goes away, so the tab is not held open.
@@ -920,10 +1023,10 @@ if (!IS_WINDOW) {
     const cap = await armCapture();
     if (cap.ok) {
       handedOff = false; // this document owns the tab again
-      el.start.disabled = false;
+      el.record.disabled = false;
       el.popout.disabled = false;
       setPopoutLabel('Open in window');
-      setStatus('Back in the side panel. Press Start to transcribe this tab.');
+      setStatus('Back in the side panel. Press Record to transcribe this tab.');
     }
   });
 }
@@ -1001,6 +1104,49 @@ function setMicHint(text, denied) {
 }
 
 /**
+ * The microphone indicator in the toolbar.
+ *
+ * One glance should answer "is my voice being saved?". The states are distinct
+ * because the remedies are distinct, and each carries its meaning in the
+ * accessible name and tooltip rather than in colour alone:
+ *
+ *   off              the option is unticked — nothing to fix
+ *   needs-permission no grant yet; pressing it opens the page that can ask
+ *   recording        actually transcribing into the saved file
+ *   blocked          Chrome is refusing; only Chrome's own UI can undo that
+ *   error            it failed for some other reason, named in the hint
+ */
+function setMicIndicator(permissionState) {
+  let state = 'off';
+  let label = 'Microphone off. Your own speech is not saved.';
+
+  if (el.includeMic.checked) {
+    if (mic?.running) {
+      state = 'recording';
+      label = 'Microphone on. Your speech is being added to the saved transcript.';
+    } else if (permissionState === 'denied') {
+      state = 'blocked';
+      label = 'Microphone blocked by Chrome. Allow it from the address-bar icon.';
+    } else if (micBlocked) {
+      state = 'error';
+      label = 'Microphone unavailable this session. The meeting transcript is unaffected.';
+    } else if (permissionState !== 'granted') {
+      state = 'needs-permission';
+      label = 'Allow microphone so your own speech is saved';
+    } else {
+      state = 'off';
+      label = 'Microphone ready. It starts with the next recording.';
+    }
+  }
+
+  el.micStatus.dataset.state = state;
+  el.micStatus.setAttribute('aria-label', label);
+  el.micStatus.title = label;
+  // Only one state has an action behind it; the others are status, not buttons.
+  el.micStatus.disabled = state !== 'needs-permission';
+}
+
+/**
  * Reflect the real permission state in the preferences row.
  *
  * Called on load and whenever the option is ticked, so the panel never implies
@@ -1010,6 +1156,7 @@ async function refreshMicPermission() {
   const state = await MicTranscriber.permissionState();
   micGranted = state === 'granted';
   el.micGrant.hidden = !el.includeMic.checked || micGranted;
+  setMicIndicator(state);
   if (!el.includeMic.checked) return state;
   if (micGranted) {
     setMicHint('Your own speech is added to the downloaded transcript only — '
@@ -1042,6 +1189,8 @@ async function openMicPermissionPage() {
  * microphone is being transcribed when it no longer is.
  */
 function onMicState(state) {
+  // Whatever happened, the toolbar indicator must stop claiming the old state.
+  refreshMicPermission();
   if (state.running) return;
   if (state.error) { disableMic('failed', state.error); return; }
   // A clean stop while the option is still on: do not leave the success wording
@@ -1132,6 +1281,27 @@ async function copy() {
     : `Copied the whole transcript (${words} words).`);
 }
 
+
+
+/**
+ * Chrome's own "You have unsaved progress" dialog.
+ *
+ * Measured on Chrome 151 (probe/spike_unload.py, probe/spike_panel_unload.py):
+ * beforeunload produces a real blocking dialog in the side panel, in the pop-out
+ * window, and in an extension page in a tab. It needs a prior user interaction,
+ * which any session that produced a transcript necessarily has.
+ *
+ * Chrome ignores the returned string and shows its own wording, so there is no
+ * custom message to write here.
+ */
+window.addEventListener('beforeunload', (event) => {
+  if (!el.warnUnsaved.checked) return undefined;
+  if (!hasUnsavedTranscript()) return undefined;
+  event.preventDefault();
+  event.returnValue = '';
+  return '';
+});
+
 function download() {
   // Download is the one place the microphone appears: the live view and Copy
   // stay exactly as they were.
@@ -1151,10 +1321,14 @@ function download() {
   } catch (e) {
     if (url) { try { URL.revokeObjectURL(url); } catch (e2) { /* nothing to revoke */ } }
     setStatus(`Could not save the transcript: ${e && e.message ? e.message : e}. `
-      + 'Use Copy all and paste it somewhere safe.', true);
+      + 'Use Copy and paste it somewhere safe.', true);
     return;
   }
   setTimeout(() => URL.revokeObjectURL(url), 5000);
+  // Remember exactly what reached the disk, so the close warning can tell the
+  // difference between "saved" and "saved, then the meeting continued".
+  savedText = text;
+  refreshUnsavedUi();
   const withMic = el.includeMic.checked && mic?.hasText();
   confirmAction('Downloaded', withMic
     ? `Downloaded ${name}, including your microphone.`
@@ -1226,8 +1400,12 @@ function clear() {
 // The ONLY caller with a live user activation, and so the only one that may ask
 // for the microphone. Wrapped rather than passed directly: the click event
 // object would otherwise arrive as the options argument.
-el.start.addEventListener('click', () => start({ gesture: true }));
-el.stop.addEventListener('click', stop);
+// One control: press to start, press again to stop. gesture:true only here,
+// because this is the sole caller with a live user activation.
+el.record.addEventListener('click', () => {
+  if (el.record.getAttribute('aria-pressed') === 'true') return stop();
+  return start({ gesture: true });
+});
 el.copy.addEventListener('click', copy);
 el.download.addEventListener('click', download);
 el.clear.addEventListener('click', clear);
@@ -1289,6 +1467,13 @@ el.includeMic.addEventListener('change', () => {
   }
 });
 el.micGrant.addEventListener('click', openMicPermissionPage);
+el.clearScreen.addEventListener('click', clearScreen);
+el.showHidden.addEventListener('click', showHidden);
+el.warnUnsaved.addEventListener('change', savePrefsFromUi);
+// The indicator is only actionable in the state that has an action: no grant yet.
+el.micStatus.addEventListener('click', () => {
+  if (el.micStatus.dataset.state === 'needs-permission') openMicPermissionPage();
+});
 el.selectToCopy.addEventListener('change', () => {
   savePrefsFromUi();
   // Turning it on mid-selection should not retroactively copy what is already
@@ -1387,8 +1572,8 @@ async function previewModelState() {
     return;
   }
   setStatus(handoff.received
-    ? 'Moved to this window. Press Start to continue transcribing.'
-    : 'Ready. Press Start to transcribe this tab.');
+    ? 'Moved to this window. Press Record to continue transcribing.'
+    : 'Ready. Press Record to transcribe this tab.');
 
   // Surface the one-time download requirement up front rather than at Start.
   previewModelState();

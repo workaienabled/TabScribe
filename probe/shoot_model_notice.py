@@ -66,7 +66,7 @@ def main():
               (() => {
                 document.getElementById('modelPanel').hidden = true;
                 document.getElementById('status').textContent =
-                  'Ready. Press Start to transcribe this tab.';
+                  'Ready. Press Record to transcribe this tab.';
                 document.getElementById('target').textContent = 'Quarterly review call';
                 document.getElementById('prefsPanel').hidden = true;
                 document.getElementById('prefsBtn').setAttribute('aria-expanded', 'false');
@@ -79,7 +79,7 @@ def main():
                 document.getElementById('prefsPanel').hidden = false;
                 document.getElementById('prefsBtn').setAttribute('aria-expanded', 'true');
                 document.getElementById('status').textContent =
-                  'Ready. Press Start to transcribe this tab.';
+                  'Ready. Press Record to transcribe this tab.';
                 return true;
               })()
             """),
@@ -116,7 +116,7 @@ def main():
                 document.getElementById('modelActions').hidden = false;
                 document.getElementById('retryModelBtn').hidden = true;
                 document.getElementById('status').textContent =
-                  'Ready. Press Start to transcribe this tab.';
+                  'Ready. Press Record to transcribe this tab.';
                 return true;
               })()
             """),

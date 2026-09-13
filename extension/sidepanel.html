@@ -16,14 +16,63 @@
     <div class="target" id="target" title="Tab being captured">Choose your meeting tab to begin</div>
   </header>
 
+  <!--
+    One row, icons only. Record is a single toggle rather than Start + Stop: the
+    two were mutually exclusive, so one control with a state is both smaller and
+    less ambiguous. Every icon keeps an aria-label and a title, because an icon
+    alone is not an accessible name and is not discoverable with a mouse.
+  -->
   <div class="controls" role="group" aria-label="Transcription controls">
-    <button id="startBtn" class="primary" title="Start transcribing this tab">Start</button>
-    <button id="stopBtn" class="ghost" disabled title="Stop recognition and keep the transcript">Stop</button>
-    <button id="popoutBtn" class="popout" aria-label="Open in window" title="Move TabScribe into its own window">
-      <span class="popout-icon" aria-hidden="true">⧉</span>
-      <span class="popout-label">Open in window</span>
+    <button id="recordBtn" class="primary record" aria-pressed="false"
+            aria-label="Start recording" title="Start transcribing this tab">
+      <span class="record-icon" aria-hidden="true"></span>
     </button>
-    <button id="prefsBtn" class="ghost prefs-toggle" aria-expanded="false"
+
+    <button id="copyBtn" class="icon-btn" aria-label="Copy transcript"
+            aria-describedby="wordCount"
+            title="Copy the whole transcript, or only the passage you select" disabled>
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="currentColor">
+        <path d="M10.5 1H4a1.5 1.5 0 0 0-1.5 1.5V11h1.5V2.5h6.5V1z"/>
+        <path d="M12.5 3.5h-6A1.5 1.5 0 0 0 5 5v8.5A1.5 1.5 0 0 0 6.5 15h6a1.5 1.5 0 0 0 1.5-1.5V5a1.5 1.5 0 0 0-1.5-1.5zm0 10h-6V5h6v8.5z"/>
+      </svg>
+    </button>
+
+    <button id="downloadBtn" class="icon-btn" aria-label="Download transcript"
+            title="Download the full transcript as a text file, even with text selected" disabled>
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="currentColor">
+        <path d="M7.25 1v7.19L4.78 5.72 3.72 6.78 8 11.06l4.28-4.28-1.06-1.06-2.47 2.47V1h-1.5z"/>
+        <path d="M2.5 12v1.5h11V12H15v1.5A1.5 1.5 0 0 1 13.5 15h-11A1.5 1.5 0 0 1 1 13.5V12h1.5z"/>
+      </svg>
+    </button>
+
+    <button id="clearScreenBtn" class="icon-btn" aria-label="Clear the screen"
+            title="Clear what is on screen. The text stays in the downloaded transcript." disabled>
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="currentColor">
+        <path d="M2 3h12v1.5H2V3zm0 4h9v1.5H2V7zm0 4h6v1.5H2V11z"/>
+        <path d="M11.47 10.47 13 12l1.53-1.53 1.06 1.06L14.06 13l1.53 1.53-1.06 1.06L13 14.06l-1.53 1.53-1.06-1.06L11.94 13l-1.53-1.53 1.06-1.06z"/>
+      </svg>
+    </button>
+
+    <span class="control-spacer"></span>
+
+    <!--
+      Microphone status. A button because in the one state that needs an action —
+      no permission yet — pressing it opens the page that can ask for one.
+    -->
+    <button id="micStatusBtn" class="icon-btn mic-status" data-state="off"
+            aria-label="Microphone off" title="Microphone off">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="currentColor">
+        <path d="M8 10a2.5 2.5 0 0 0 2.5-2.5V4a2.5 2.5 0 0 0-5 0v3.5A2.5 2.5 0 0 0 8 10z"/>
+        <path d="M12 7.5a4 4 0 0 1-8 0H2.5a5.5 5.5 0 0 0 4.75 5.45V15h1.5v-2.05A5.5 5.5 0 0 0 13.5 7.5H12z"/>
+      </svg>
+      <span class="mic-slash" aria-hidden="true"></span>
+    </button>
+
+    <button id="popoutBtn" class="icon-btn popout" aria-label="Open in window" title="Move TabScribe into its own window">
+      <span class="popout-icon" aria-hidden="true">⧉</span>
+    </button>
+
+    <button id="prefsBtn" class="icon-btn prefs-toggle" aria-expanded="false"
             aria-controls="prefsPanel" aria-label="Preferences" title="Preferences">
       <svg class="gear" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="currentColor">
         <path d="M8 5.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6zm0 4.4a1.6 1.6 0 1 1 0-3.2 1.6 1.6 0 0 1 0 3.2z"/>
@@ -61,12 +110,13 @@
       <label class="check"><input type="checkbox" id="autoscroll" checked> Auto-scroll</label>
       <label class="check"><input type="checkbox" id="selectToCopy" checked> Select to copy</label>
       <label class="check"><input type="checkbox" id="copyToast" checked> Copy toast</label>
+      <label class="check"><input type="checkbox" id="warnUnsaved" checked> Warn before closing unsaved</label>
     </div>
     <label class="check mic-check"><input type="checkbox" id="includeMic" checked> Include my microphone in the saved file</label>
     <p class="field-hint" id="micHint">Your own speech is added to the downloaded transcript only — never shown live. Needs microphone permission.</p>
     <button id="micGrantBtn" class="mic-grant" hidden>Allow microphone…</button>
     <p class="field-hint" id="recognitionHint">Language and on-device/cloud apply at the next Start.</p>
-    <button id="clearBtn" class="danger" title="Clear this transcript (can be undone)" disabled>Clear transcript</button>
+    <button id="clearBtn" class="danger" title="Delete this transcript, including from the download (can be undone)" disabled>Delete transcript</button>
   </div>
 
   <div id="status" class="status" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -80,20 +130,29 @@
     <div class="model-actions" id="modelActions"><button id="useCloudBtn" class="ghost">Use cloud instead</button><button id="retryModelBtn" class="ghost" hidden>Retry download</button></div>
   </section>
 
+  <!--
+    Shown when the screen was cleared but the text is still in the saved file.
+    Without it, "cleared" and "deleted" look identical on screen and the download
+    comes as a surprise.
+  -->
+  <div id="hiddenNotice" class="hidden-notice" hidden>
+    <span id="hiddenCount">0 words</span> cleared from view, still in the download.
+    <button id="showHiddenBtn" class="link-btn">Show</button>
+  </div>
+
   <main id="transcript" class="transcript" tabindex="0" aria-label="Transcript" aria-live="off">
     <div class="empty" id="emptyHint">
-      Click <strong>Start</strong> to transcribe this meeting. Select a passage and copy it into your AI chat. Download the full transcript before closing.
+      Press <strong>Record</strong> to transcribe this meeting. Select a passage and copy it into your AI chat. Download the full transcript before closing.
     </div>
   </main>
 
   <button id="jumpLatestBtn" class="jump-latest" hidden>↓ Back to live</button>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden>Copied</div>
-  <div id="undoBar" class="undo-bar" hidden><span role="status">Transcript cleared</span><button id="undoClearBtn">Undo</button><button id="undoDismiss" aria-label="Discard recovery copy" title="Discard recovery copy">×</button></div>
+  <div id="undoBar" class="undo-bar" hidden><span role="status">Transcript deleted</span><button id="undoClearBtn">Undo</button><button id="undoDismiss" aria-label="Discard recovery copy" title="Discard recovery copy">×</button></div>
   <footer class="footer">
-    <div class="stats"><span id="wordCount">0 words</span></div>
-    <div class="actions">
-      <button id="copyBtn" aria-describedby="wordCount" title="Copy the whole transcript, or only the passage you select" disabled>Copy all</button>
-      <button id="downloadBtn" title="Download the full transcript as a text file, even with text selected" disabled>Download</button>
+    <div class="stats">
+      <span id="wordCount">0 words</span>
+      <span id="unsavedDot" class="unsaved-dot" title="Not downloaded yet" hidden>&bull; not saved</span>
     </div>
   </footer>
   <script type="module" src="sidepanel.js"></script>

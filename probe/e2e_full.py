@@ -276,10 +276,10 @@ def main():
             raise SystemExit(1)
 
         panel_sid = chrome.attach(panel["targetId"])
-        chrome.wait_for_js(panel_sid, "!!document.getElementById('startBtn')", timeout=30)
+        chrome.wait_for_js(panel_sid, "!!document.getElementById('recordBtn')", timeout=30)
 
         print("\n=== UI SURFACE ===", flush=True)
-        for ctrl in ["startBtn", "stopBtn", "copyBtn", "downloadBtn", "clearBtn", "langSel", "localOnly"]:
+        for ctrl in ["recordBtn", "copyBtn", "downloadBtn", "clearBtn", "langSel", "localOnly"]:
             checks.add(f"control present: {ctrl}",
                        chrome.evaluate(panel_sid, f"!!document.getElementById('{ctrl}')", await_promise=False))
 
@@ -368,7 +368,7 @@ def main():
         # Start recognition BEFORE playback. Pressing Start after audio is already
         # playing loses however much was spoken in the meantime, which is expected
         # behaviour but would otherwise be scored as a recognition error.
-        chrome.evaluate(panel_sid, "document.getElementById('startBtn').click()", await_promise=False)
+        chrome.evaluate(panel_sid, "document.getElementById('recordBtn').click()", await_promise=False)
 
         started = False
         status = ""
@@ -407,10 +407,11 @@ def main():
                                        await_promise=False)
         print(f"  words before stop: {words_before}", flush=True)
 
-        chrome.evaluate(panel_sid, "document.getElementById('stopBtn').click()", await_promise=False)
+        chrome.evaluate(panel_sid, "document.getElementById('recordBtn').click()", await_promise=False)
         deadline = time.time() + 30
         while time.time() < deadline:
-            if chrome.evaluate(panel_sid, "document.getElementById('startBtn').disabled === false",
+            if chrome.evaluate(panel_sid,
+                               "document.getElementById('recordBtn').getAttribute('aria-pressed') === 'false'",
                                await_promise=False):
                 break
             time.sleep(0.5)
@@ -459,18 +460,33 @@ def main():
         if os.environ.get('TABSCRIBE_RESUME_CHECK') == '1':
             # Repeat the known audio after a normal Stop/Start. Recognition result
             # indices restart at zero, but prior transcript text must not change.
-            chrome.evaluate(panel_sid, "document.getElementById('startBtn').click()", await_promise=False)
+            chrome.evaluate(panel_sid, "document.getElementById('recordBtn').click()", await_promise=False)
             chrome.wait_for_js(panel_sid, "document.getElementById('dot').dataset.state === 'listening'", timeout=30)
             chrome.evaluate(page_sid, "(() => { const a=document.getElementById('audio'); a.currentTime=0; return a.play(); })()")
             chrome.wait_for_js(page_sid, "document.getElementById('audio').ended", timeout=75)
-            chrome.evaluate(panel_sid, "document.getElementById('stopBtn').click()", await_promise=False)
-            chrome.wait_for_js(panel_sid, "!document.getElementById('startBtn').disabled", timeout=30)
+            chrome.evaluate(panel_sid, "document.getElementById('recordBtn').click()", await_promise=False)
+            chrome.wait_for_js(panel_sid,
+                               "document.getElementById('recordBtn').getAttribute('aria-pressed') === 'false'",
+                               timeout=30)
             resumed = chrome.evaluate(panel_sid, "Array.from(document.querySelectorAll('#transcript .seg')).map(e => e.innerText.trim()).join(' ')") or ''
             checks.add('Stop/Start retains the first transcript verbatim', resumed.startswith(transcript), resumed)
             doubled = report(REFERENCE + ' ' + REFERENCE, resumed)
             checks.add('Stop/Start appends the second known script', doubled['wer'] <= WER_THRESHOLD,
                        f"WER={doubled['wer']:.3f} accuracy={doubled['accuracy_pct']}%")
 
+        # Delete is only meaningful once the recognizer has finished flushing:
+        # stop() sets aria-pressed false immediately, but the final sentence can
+        # still land afterwards and would be counted as "not cleared".
+        deadline = time.time() + 15
+        stable, last = 0, None
+        while time.time() < deadline:
+            now = chrome.evaluate(panel_sid, "document.getElementById('wordCount').textContent",
+                                  await_promise=False)
+            stable = stable + 1 if now == last else 0
+            last = now
+            if stable >= 3:
+                break
+            time.sleep(0.4)
         chrome.evaluate(panel_sid, "document.getElementById('clearBtn').click()", await_promise=False)
         time.sleep(0.4)
         after = chrome.evaluate(panel_sid, "document.getElementById('wordCount').textContent",

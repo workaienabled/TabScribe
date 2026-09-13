@@ -144,7 +144,7 @@ def main():
             raise SystemExit(1)
 
         panel_sid = chrome.attach(panel["targetId"])
-        chrome.wait_for_js(panel_sid, "!!document.getElementById('startBtn')", timeout=30)
+        chrome.wait_for_js(panel_sid, "!!document.getElementById('recordBtn')", timeout=30)
 
         avail = chrome.evaluate(panel_sid,
                                 "SpeechRecognition.available({langs:['en-US'],processLocally:true})")
@@ -178,7 +178,7 @@ def main():
 
         # --- DURING DOWNLOAD --------------------------------------------------
         print("\n=== NOTICE DURING DOWNLOAD ===", flush=True)
-        chrome.evaluate(panel_sid, "document.getElementById('startBtn').click()", await_promise=False)
+        chrome.evaluate(panel_sid, "document.getElementById('recordBtn').click()", await_promise=False)
 
         during = {}
         saw_downloading = False

@@ -46,14 +46,46 @@ button.danger:hover:not(:disabled) { color: var(--danger); border-color: var(--d
 .dot[data-state="error"] { background: var(--danger); }
 .dot[data-state="starting"], .dot[data-state="restarting"] { background: var(--accent); }
 
-.controls { display: flex; align-items: center; gap: 6px; padding: 8px 12px; flex: none; flex-wrap: nowrap; }
-button.popout { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 5px 10px; color: var(--accent); background: transparent; }
-.popout-icon { font-size: 13px; line-height: 1; }
-button.prefs-toggle { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; padding: 5px 8px; align-self: stretch; }
+.controls { display: flex; align-items: center; gap: 4px; padding: 8px 12px; flex: none; flex-wrap: nowrap; }
+.control-spacer { flex: 1 1 auto; min-width: 0; }
+
+/* Icon buttons are sized by their icon, not by text metrics, so they need an
+   explicit box or they sit off the row's baseline next to a text button. */
+button.icon-btn { display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; width: 28px; height: 28px; flex: none; }
+button.icon-btn svg { display: block; }
 .gear { display: block; }
+button.popout { color: var(--accent); background: transparent; }
+.popout-icon { font-size: 13px; line-height: 1; }
 button.prefs-toggle[aria-expanded="true"] { color: var(--fg); border-color: var(--muted); }
 body.view-window #popoutBtn { display: none; }
-@media (max-width: 340px) { button.popout .popout-label { display: none; } button.popout { padding: 5px 9px; } }
+
+/* One toggle, two states. The square inside the circle is the stop affordance;
+   aria-pressed carries the state for anyone not looking at it. */
+button.record { display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; width: 30px; height: 28px; flex: none; }
+.record-icon { width: 11px; height: 11px; border-radius: 50%; background: currentColor; display: block; }
+button.record[aria-pressed="true"] { background: var(--danger); }
+button.record[aria-pressed="true"] .record-icon { border-radius: 2px; width: 9px; height: 9px; }
+
+/* Microphone status. Colour alone never carries the meaning: the accessible
+   name and tooltip are set alongside data-state in sidepanel.js. */
+button.mic-status { position: relative; color: var(--muted); }
+button.mic-status[data-state="recording"] { color: var(--ok); border-color: var(--ok); }
+button.mic-status[data-state="needs-permission"] { color: var(--accent); border-color: var(--accent); }
+button.mic-status[data-state="blocked"], button.mic-status[data-state="error"] { color: var(--danger); border-color: var(--danger); }
+button.mic-status[data-state="off"] .mic-slash,
+button.mic-status[data-state="blocked"] .mic-slash { display: block; }
+.mic-slash { display: none; position: absolute; left: 4px; right: 4px; top: 50%;
+  height: 1.5px; background: currentColor; transform: rotate(-45deg); }
+
+/* The row is the tightest constraint in the UI: seven controls at 280px. Tighten
+   the gaps and the padding, never the buttons themselves — 28x28 is the smallest
+   target this project accepts, and shrinking below it trades a real usability
+   floor for space that the gaps can give up instead. */
+@media (max-width: 340px) {
+  .controls { gap: 2px; padding: 8px 6px; }
+}
 
 /* flex: 0 1 auto, not none: body is overflow:hidden, so an optional panel that
    refuses to shrink pushes the footer — and with it Download — off-screen in a
@@ -121,9 +153,15 @@ select { min-height: 28px; padding: 4px 6px; border: 1px solid var(--border); bo
 .undo-bar button { padding: 3px 9px; background: transparent; }
 #undoClearBtn { color: var(--accent); font-weight: 650; }
 .footer { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--border); background: var(--surface); }
-.stats { min-width: 0; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.actions { display: flex; gap: 6px; }
-.actions button { font-size: 12px; padding: 4px 10px; }
+.stats { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.unsaved-dot { color: var(--accent); font-weight: 600; }
+
+/* Cleared from view but still in the file. This has to be visible, or "cleared"
+   and "deleted" look the same on screen and the download surprises people. */
+.hidden-notice { flex: none; display: flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-bottom: 1px solid var(--border);
+  background: var(--surface); color: var(--muted); font-size: 11px; }
+.link-btn { padding: 1px 6px; border: 0; background: transparent; color: var(--accent); font-size: 11px; }
 .jump-latest { flex: none; align-self: flex-end; margin: 0 12px 4px; padding: 2px 8px; min-height: 0; border: 0; background: transparent; color: var(--accent); font-size: 11px; }
 .toast { position: absolute; z-index: 8; left: 50%; bottom: 48px; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 4px 12px; border-radius: 12px; background: var(--fg); color: var(--bg); font-size: 11.5px; pointer-events: none; opacity: 0; transition: opacity .12s ease-out; }
 /* Clear the recovery bar when it is showing: Undo is time-limited and must stay

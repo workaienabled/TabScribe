@@ -125,7 +125,7 @@ def grant_flow(ui):
         if (!isTab) calls += 1;
         return real(constraints);
       };
-      document.getElementById('startBtn').click();
+      document.getElementById('recordBtn').click();
       await new Promise((r) => setTimeout(r, 700));
       navigator.mediaDevices.getUserMedia = real;
       return {calls, hint: document.getElementById('micHint').textContent};

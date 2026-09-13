@@ -94,10 +94,10 @@ def robustness(ui):
 
     # --- pop-out hand-off: accessible name, and focus instead of re-capture ---
     click(ui, 'popoutBtn')
-    ui.chrome.wait_for_js(ui.sid, "document.getElementById('startBtn').disabled === true", timeout=15)
+    ui.chrome.wait_for_js(ui.sid, "document.getElementById('recordBtn').disabled === true", timeout=15)
     handed = ui.js("""(() => {
       const b = document.getElementById('popoutBtn');
-      return {label: b.querySelector('.popout-label').textContent.trim(),
+      return {label: b.getAttribute('aria-label'),
               aria: b.getAttribute('aria-label'),
               status: document.getElementById('status').textContent};
     })()""")
@@ -110,8 +110,8 @@ def robustness(ui):
     again = ui.js("""(() => ({
       status: document.getElementById('status').textContent,
       isError: document.getElementById('status').classList.contains('error'),
-      startDisabled: document.getElementById('startBtn').disabled,
-      label: document.getElementById('popoutBtn').querySelector('.popout-label').textContent.trim(),
+      startDisabled: document.getElementById('recordBtn').disabled,
+      label: document.getElementById('popoutBtn').getAttribute('aria-label'),
       popoutDisabled: document.getElementById('popoutBtn').disabled,
     }))()""")
     # Re-arming is impossible while the window holds the tab, so a second click
@@ -140,7 +140,7 @@ def review(ui):
     ui.check('Clear offers Undo before the hand-off',
              ui.js("!document.getElementById('undoBar').hidden"))
     click(ui, 'popoutBtn')
-    ui.chrome.wait_for_js(ui.sid, "document.getElementById('startBtn').disabled === true", timeout=15)
+    ui.chrome.wait_for_js(ui.sid, "document.getElementById('recordBtn').disabled === true", timeout=15)
     ui.check('handing the tab over drops the pending Undo',
              ui.js("document.getElementById('undoBar').hidden"))
 

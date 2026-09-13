@@ -110,9 +110,9 @@ def main():
             return
 
         psid = chrome.attach(panel["targetId"])
-        chrome.wait_for_js(psid, "!!document.getElementById('startBtn')", timeout=30)
+        chrome.wait_for_js(psid, "!!document.getElementById('recordBtn')", timeout=30)
 
-        chrome.evaluate(psid, "document.getElementById('startBtn').click()", await_promise=False)
+        chrome.evaluate(psid, "document.getElementById('recordBtn').click()", await_promise=False)
         dl = time.time() + 45
         while time.time() < dl:
             if chrome.evaluate(psid, "document.getElementById('dot').dataset.state",
@@ -128,7 +128,7 @@ def main():
             if n >= 12:
                 break
             time.sleep(0.3)
-        chrome.evaluate(psid, "document.getElementById('stopBtn').click()", await_promise=False)
+        chrome.evaluate(psid, "document.getElementById('recordBtn').click()", await_promise=False)
         time.sleep(2)
 
         print("\n=== STEP BY STEP ===", flush=True)

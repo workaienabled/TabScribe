@@ -21,27 +21,44 @@ reopen its panel. Save any transcript before reloading.
 
 ## Reading and controls
 
-- **Start / Stop:** control recognition. Stop keeps the text for copying or saving.
-  Starting again appends a new session instead of overwriting the previous one.
+Everything lives in one row of icon controls. Each has a tooltip and an
+accessible name; none carries its meaning in colour alone.
+
+- **Record:** one toggle. Press to start, press again to stop. Stopping keeps the
+  text for copying or saving, and starting again appends a new session instead of
+  overwriting the previous one.
+- **Clear screen:** empties what is on screen **without removing anything from the
+  transcript**. A line above the transcript reports how much is hidden and offers
+  **Show** to bring it back; **Download still writes everything**. This is the
+  opposite of **Gear → Delete transcript**, which does remove the text from the
+  saved file.
+- **Microphone status:** whether your own voice is being saved — off, ready,
+  recording, blocked, or not yet permitted. In that last state it is a button, and
+  pressing it opens the page that can ask for permission.
 - **Open in window:** moves the transcript into a pop-out and closes the sidebar.
   If recognition was running, it resumes there. Window size is remembered.
 - **Gear:** opens compact preferences in place. Escape or the gear dismisses them.
-  The toolbar stays on one row; at narrow widths the pop-out is icon-only.
+  All seven controls stay on one row down to 280px.
 - **Auto-scroll:** follows new text only while you are at the bottom. Scroll up to
   read history; **Back to live** returns you without covering transcript text or
   changing your auto-scroll preference.
-- **Copy selection / Copy all:** the label shows exactly what will be copied.
-  **Select to copy** is on by default. The independent **Copy toast** toggle controls
-  the brief “Copied” confirmation for both automatic and manual copying. Copying
-  does not replace the recognition status on success. Paste the passage into your own AI chat;
+- **Copy:** copies the passage you selected, or the whole transcript when nothing
+  is selected; the tooltip and accessible name say which. **Select to copy** is on
+  by default. The independent **Copy toast** toggle controls the brief “Copied”
+  confirmation for both automatic and manual copying. Copying does not replace the
+  recognition status on success. Paste the passage into your own AI chat;
   TabScribe does not send transcripts to an AI provider.
 - **Download:** always downloads the entire transcript as a plain-text `.txt` file,
   even with text selected, with timestamps if enabled. Download before closing:
   transcripts are not saved automatically.
+- **Warn before closing unsaved** (on by default): if you close TabScribe with a
+  transcript you never downloaded, Chrome shows its own "unsaved progress" prompt.
+  It disarms the moment you download, and re-arms if the meeting carries on
+  afterwards. A dot in the footer shows the same state at a glance.
 - **Include my microphone in the saved file** (on by default): also transcribes
   your own speech and merges it into the **downloaded file only**. It is never
   shown in the live transcript and never copied by Copy. See below.
-- **Gear → Clear transcript:** immediately clears text, including the current
+- **Gear → Delete transcript:** immediately removes the text, including the current
   utterance, and keeps listening. Preferences close to reveal **Undo**, which
   restores the cleared text before anything received since.
   Only the most recent Clear is recoverable; recovery is held in this view's memory

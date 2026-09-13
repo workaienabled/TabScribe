@@ -33,6 +33,8 @@ export const DEFAULTS = {
   // Brief "Copied" toast on auto-copy. Separate from selectToCopy so the copying
   // can stay on while the confirmation is silenced.
   copyToast: true,
+  // Chrome's own close warning when the transcript has not been downloaded.
+  warnUnsaved: true,
   // Whether the preferences group is expanded. Remembered so the panel opens the
   // way it was left rather than snapping shut every time.
   prefsOpen: false,

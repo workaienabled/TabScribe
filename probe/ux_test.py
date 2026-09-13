@@ -65,6 +65,65 @@ class UI:
         self.js("document.body.classList.remove('view-window')")
         self.size(360)
 
+    def arm_capture(self):
+        """Reload the panel with tab capture stubbed in, so Record runs fully.
+
+        Installed before the document runs, because the panel arms on load.
+        Without this the record path returns at the capture check and every
+        assertion after it passes without exercising the code under test.
+        """
+        self.chrome.send('Page.enable', session_id=self.sid)
+        self.chrome.send('Page.addScriptToEvaluateOnNewDocument', session_id=self.sid, source="""
+          (() => {
+            const realGum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+            navigator.mediaDevices.getUserMedia = (constraints) => {
+              const isTab = !!(constraints && constraints.audio && constraints.audio.mandatory
+                               && constraints.audio.mandatory.chromeMediaSource === 'tab');
+              if (!isTab) return realGum(constraints);
+              const ctx = new AudioContext();
+              const dest = ctx.createMediaStreamDestination();
+              const osc = ctx.createOscillator();
+              const gain = ctx.createGain();
+              gain.gain.value = 0;
+              osc.connect(gain); gain.connect(dest); osc.start();
+              return Promise.resolve(dest.stream);
+            };
+            const realSend = chrome.runtime.sendMessage.bind(chrome.runtime);
+            chrome.runtime.sendMessage = (msg, ...rest) => {
+              if (msg && msg.type === 'GET_STREAM_ID') {
+                return Promise.resolve({ok: true, streamId: 'test', tabId: 1, title: 'Test tab'});
+              }
+              return realSend(msg, ...rest);
+            };
+          })();
+        """)
+        self.chrome.send('Page.reload', session_id=self.sid)
+        # The button enables before arming completes; wait for the status the
+        # panel sets once it actually holds the tab.
+        self.chrome.wait_for_js(
+            self.sid,
+            "!document.getElementById('recordBtn').disabled && "
+            "/Press Record|Ready/.test(document.getElementById('status').textContent)",
+            timeout=20)
+
+    def download_and_read(self, directory):
+        """Press Download and return what was actually written to disk.
+
+        A fresh subdirectory per call, so an overwritten same-name file cannot be
+        mistaken for a new download and a stale file cannot satisfy a later read.
+        """
+        destination = Path(directory) / f'dl-{len(self.checks)}-{int(time.time() * 1000)}'
+        destination.mkdir(parents=True)
+        self.chrome.send('Browser.setDownloadBehavior', behavior='allow',
+                         downloadPath=str(destination))
+        self.js("document.getElementById('downloadBtn').click()")
+        for _ in range(40):
+            files = [p for p in destination.iterdir() if p.suffix == '.txt']
+            if files and files[0].stat().st_size > 0:
+                return files[0].read_text()
+            time.sleep(0.25)
+        return ''
+
     def capture_store(self):
         # Test-only observation of the real store during a real render. No hooks
         # or fixtures are exposed by production code.
@@ -121,7 +180,7 @@ def shell(ui):
     for w in [280, 300, 320, 340, 360, 430, 640]:
         ui.size(w, 620)
         fit = ui.js("""(() => {
-          const rs = ['startBtn','stopBtn','popoutBtn','prefsBtn'].map(id => document.getElementById(id).getBoundingClientRect());
+          const rs = ['recordBtn','copyBtn','downloadBtn','clearScreenBtn','micStatusBtn','popoutBtn','prefsBtn'].map(id => document.getElementById(id).getBoundingClientRect());
           return {oneRow: Math.max(...rs.map(r=>r.top)) < Math.min(...rs.map(r=>r.bottom)),
             targets: rs.every(r=>r.height>=24 && r.width>=28),
             overflow: document.documentElement.scrollWidth > innerWidth};

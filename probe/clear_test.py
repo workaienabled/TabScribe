@@ -165,7 +165,7 @@ def main():
             raise SystemExit(1)
 
         panel_sid = chrome.attach(panel["targetId"])
-        chrome.wait_for_js(panel_sid, "!!document.getElementById('startBtn')", timeout=30)
+        chrome.wait_for_js(panel_sid, "!!document.getElementById('recordBtn')", timeout=30)
 
         model = chrome.evaluate(panel_sid,
                                 "SpeechRecognition.available({langs:['en-US'],processLocally:true})")
@@ -173,7 +173,7 @@ def main():
             chrome.evaluate(panel_sid, "SpeechRecognition.install({langs:['en-US'],processLocally:true})")
 
         print("\n=== RECOGNITION ===", flush=True)
-        chrome.evaluate(panel_sid, "document.getElementById('startBtn').click()", await_promise=False)
+        chrome.evaluate(panel_sid, "document.getElementById('recordBtn').click()", await_promise=False)
         started = False
         deadline = time.time() + 45
         while time.time() < deadline:
@@ -257,10 +257,10 @@ def main():
 
         # Clear again with recognition stopped: must also work and stay empty.
         print("\n=== CLEAR AFTER STOP ===", flush=True)
-        chrome.evaluate(panel_sid, "document.getElementById('stopBtn').click()", await_promise=False)
+        chrome.evaluate(panel_sid, "document.getElementById('recordBtn').click()", await_promise=False)
         deadline = time.time() + 30
         while time.time() < deadline:
-            if chrome.evaluate(panel_sid, "document.getElementById('startBtn').disabled === false",
+            if chrome.evaluate(panel_sid, "document.getElementById('recordBtn').disabled === false",
                                await_promise=False):
                 break
             time.sleep(0.5)

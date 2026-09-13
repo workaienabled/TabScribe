@@ -97,8 +97,8 @@ def arm_capture(ui):
     # sets once it actually holds the tab, or the checks below go vacuous.
     ui.chrome.wait_for_js(
         ui.sid,
-        "!document.getElementById('startBtn').disabled && "
-        "/Press Start|Ready/.test(document.getElementById('status').textContent)",
+        "!document.getElementById('recordBtn').disabled && "
+        "/Press Record|Ready/.test(document.getElementById('status').textContent)",
         timeout=20)
 
 
@@ -251,7 +251,7 @@ def mic_permission(ui):
       const box = document.getElementById('includeMic');
       box.checked = true; box.dispatchEvent(new Event('change'));
       // Drive the panel's own Start path, so the production wiring is under test.
-      document.getElementById('startBtn').click();
+      document.getElementById('recordBtn').click();
       // The request is issued synchronously inside the click, but the handler
       // above runs as a microtask; give it room without waiting for the prompt.
       await new Promise((r) => setTimeout(r, 400));
@@ -312,15 +312,18 @@ def mic_permission(ui):
         }
         return realSend(msg, ...rest);
       };
-      // start() is the only code that disables the Start button, so watching it
-      // proves the resume path got there without adding a production hook.
+      // start() sets aria-pressed="true" as soon as it is entered, and is the
+      // only code that does, so watching that attribute proves the resume path
+      // got there — without adding a production test hook. (The older detector
+      // watched `disabled`, which start() now clears again immediately so the
+      // control stays usable during a long model download.)
       window.__reachedStart = false;
       document.addEventListener('DOMContentLoaded', () => {
-        const btn = document.getElementById('startBtn');
+        const btn = document.getElementById('recordBtn');
         if (!btn) return;
         new MutationObserver(() => {
-          if (btn.disabled) window.__reachedStart = true;
-        }).observe(btn, {attributes: true, attributeFilter: ['disabled']});
+          if (btn.getAttribute('aria-pressed') === 'true') window.__reachedStart = true;
+        }).observe(btn, {attributes: true, attributeFilter: ['aria-pressed', 'disabled']});
       });
     """)
     ui.chrome.send('Page.navigate', session_id=ui.sid,

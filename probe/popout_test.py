@@ -184,7 +184,7 @@ def main():
             raise SystemExit(1)
 
         panel_sid = chrome.attach(panel["targetId"])
-        chrome.wait_for_js(panel_sid, "!!document.getElementById('startBtn')", timeout=30)
+        chrome.wait_for_js(panel_sid, "!!document.getElementById('recordBtn')", timeout=30)
 
         # The button must be genuinely visible and labelled, not a bare glyph tucked
         # into a corner where it goes unnoticed.
@@ -196,6 +196,7 @@ def main():
           const r = b.getBoundingClientRect();
           return {
             text: b.innerText.trim(),
+            name: b.getAttribute("aria-label") || "",
             width: Math.round(r.width), height: Math.round(r.height),
             visible: cs.display !== 'none' && cs.visibility !== 'hidden' && r.width > 0,
             color: cs.color, borderColor: cs.borderTopColor,
@@ -206,13 +207,17 @@ def main():
         print(f"  pop-out button: {json.dumps(btn)}", flush=True)
         checks.add("pop-out button present in the side panel", not btn.get("missing"))
         checks.add("pop-out button is visible", btn.get("visible"), json.dumps(btn))
-        checks.add("pop-out button carries a text label",
-                   len((btn.get("text") or "").replace("⧉", "").strip()) >= 4,
-                   f"text={btn.get('text')!r}")
+        # Icon-only now, so the NAME is what must exist — an icon with no
+        # accessible name is unusable with a screen reader.
+        checks.add("pop-out button carries an accessible name",
+                   len((btn.get("name") or "").strip()) >= 4,
+                   f"name={btn.get('name')!r}")
         checks.add("pop-out button sits in the main controls row",
                    btn.get("inControls"), f"inControls={btn.get('inControls')}")
-        checks.add("pop-out button is reasonably sized",
-                   (btn.get("width") or 0) >= 90 and (btn.get("height") or 0) >= 20,
+        # 28x28 is the project's floor for an icon target; the old 90px minimum
+        # described a labelled button that no longer exists.
+        checks.add("pop-out button is a usable target",
+                   (btn.get("width") or 0) >= 28 and (btn.get("height") or 0) >= 28,
                    f"{btn.get('width')}x{btn.get('height')}")
 
         model = chrome.evaluate(panel_sid,
@@ -222,7 +227,7 @@ def main():
 
         # Transcribe a little in the side panel first, so there is text to carry over.
         print("\n=== TRANSCRIBE IN THE SIDE PANEL ===", flush=True)
-        chrome.evaluate(panel_sid, "document.getElementById('startBtn').click()", await_promise=False)
+        chrome.evaluate(panel_sid, "document.getElementById('recordBtn').click()", await_promise=False)
         deadline = time.time() + 45
         while time.time() < deadline:
             if chrome.evaluate(panel_sid, "document.getElementById('dot').dataset.state",
@@ -260,7 +265,7 @@ def main():
             raise SystemExit(1)
 
         win_sid = chrome.attach(window_target["targetId"])
-        chrome.wait_for_js(win_sid, "!!document.getElementById('startBtn')", timeout=30)
+        chrome.wait_for_js(win_sid, "!!document.getElementById('recordBtn')", timeout=30)
         time.sleep(2)
 
         # It must be a real popup window, not a tab. Note: tab URLs come back null
