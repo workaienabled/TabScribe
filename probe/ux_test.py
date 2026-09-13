@@ -208,9 +208,29 @@ def find(ui):
     ui.check('Ctrl+F opens transcript search', ui.js("!document.getElementById('findPanel').hidden && document.activeElement.id === 'findInput'"))
 
 
+def undo(ui):
+    ui.fixture(3)
+    ui.capture_store()
+    ui.js("window.oldText=fixtureStore.toText(); document.getElementById('clearBtn').click()")
+    ui.check('Clear still removes all transcript immediately', ui.js("document.querySelectorAll('.seg').length === 0 && fixtureStore.isEmpty()"))
+    exists = ui.js("!!document.getElementById('undoClearBtn') && !document.getElementById('undoBar').hidden")
+    ui.check('Clear offers a visible Undo', exists)
+    if not exists:
+        return
+    ui.js("fixtureStore.update(0, 'New words since clearing.', false, 20000); document.getElementById('tsToggle').dispatchEvent(new Event('change')); document.getElementById('undoClearBtn').click()")
+    ui.check('Undo recovers old text and preserves new text', ui.js("fixtureStore.toText() === oldText + ' New words since clearing.'"))
+    ui.js("fixtureStore.update(0, 'New words finalized after undo.', true, 20000); document.getElementById('tsToggle').dispatchEvent(new Event('change'))")
+    ui.check('live result keys still update correctly after Undo', ui.js("fixtureStore.toText() === oldText + ' New words finalized after undo.' && document.querySelectorAll('.seg').length === 4"))
+    ui.check('Undo is single-use', ui.js("document.getElementById('undoBar').hidden"))
+    ui.js("document.getElementById('copyToast').checked=false; document.getElementById('copyToast').dispatchEvent(new Event('change')); document.getElementById('clearBtn').click()")
+    ui.check('copy-toast preference cannot hide recovery action', ui.js("!document.getElementById('undoBar').hidden"))
+    ui.js("document.getElementById('undoDismiss').click()")
+    ui.check('dismiss leaves transcript cleared', ui.js("document.getElementById('undoBar').hidden && fixtureStore.isEmpty()"))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('stage', choices=['shell', 'reading', 'navigation', 'find'])
+    parser.add_argument('stage', choices=['shell', 'reading', 'navigation', 'find', 'undo'])
     args = parser.parse_args()
     ui = UI()
     try:

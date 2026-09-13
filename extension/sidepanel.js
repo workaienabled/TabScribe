@@ -26,6 +26,9 @@ const el = {
   copy: document.getElementById('copyBtn'),
   download: document.getElementById('downloadBtn'),
   clear: document.getElementById('clearBtn'),
+  undoBar: document.getElementById('undoBar'),
+  undoClear: document.getElementById('undoClearBtn'),
+  undoDismiss: document.getElementById('undoDismiss'),
   popout: document.getElementById('popoutBtn'),
   lang: document.getElementById('langSel'),
   localOnly: document.getElementById('localOnly'),
@@ -891,7 +894,29 @@ function download() {
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
+// Only the most recent Clear is recoverable, in this view's memory. It is never
+// persisted to disk, and remains available until used, dismissed, or replaced.
+let clearedSnapshot = null;
+
+function undoClear() {
+  if (!clearedSnapshot || !transcriber) return;
+  transcriber.store.prepend(clearedSnapshot);
+  clearedSnapshot = null;
+  el.undoBar.hidden = true;
+  // Rebuild only for the explicit recovery action, never for live updates.
+  nodes.clear();
+  el.transcript.replaceChildren(el.empty);
+  following = false;
+  render(transcriber.store);
+  el.transcript.scrollTop = 0;
+  el.transcript.focus({preventScroll: true});
+}
+
 function clear() {
+  if (transcriber && !transcriber.store.isEmpty()) {
+    clearedSnapshot = transcriber.store.serialize();
+    el.undoBar.hidden = false;
+  }
   // Drop the DOM rows and their cached identities first, so nothing from the old
   // transcript can be reused when rendering resumes.
   nodes.clear();
@@ -927,6 +952,12 @@ el.stop.addEventListener('click', stop);
 el.copy.addEventListener('click', copy);
 el.download.addEventListener('click', download);
 el.clear.addEventListener('click', clear);
+el.undoClear.addEventListener('click', undoClear);
+el.undoDismiss.addEventListener('click', () => {
+  clearedSnapshot = null;
+  el.undoBar.hidden = true;
+  el.transcript.focus({preventScroll: true});
+});
 el.popout.addEventListener('click', popOut);
 el.useCloud.addEventListener('click', useCloudInstead);
 el.retryModel.addEventListener('click', retryModel);

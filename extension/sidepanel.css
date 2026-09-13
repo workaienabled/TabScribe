@@ -120,6 +120,12 @@ select { width: 100%; min-height: 36px; padding: 6px 9px; border: 1px solid var(
 .empty h1 { font-size: 21px; font-weight: 600; letter-spacing: -.6px; margin: 16px 0 8px; color: var(--fg); line-height: 1.3; }
 .empty p { font-size: 13px; line-height: 1.7; color: var(--muted); margin: 0 0 12px; }
 .empty .empty-detail { font-size: 11px; }
+.undo-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--border); background: var(--soft-accent); font-size: 11px; }
+.undo-bar span { margin-right: auto; }
+.undo-bar button { min-height: 30px; padding: 3px 9px; background: transparent; }
+#undoClearBtn { color: var(--accent); font-weight: 650; }
+body:has(#undoBar:not([hidden])) .jump-latest { bottom: 112px; }
+body:has(#undoBar:not([hidden])) .toast { bottom: 154px; }
 .footer { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--surface); }
 .stats { min-width: 0; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 .actions { display: flex; gap: 4px; }
