@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TabScribe — microphone access</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body class="grant-page">
+  <main class="grant">
+    <h1>Include your own voice in saved transcripts</h1>
+    <p class="grant-lead">
+      TabScribe transcribes the meeting from the tab. The tab carries every voice
+      except yours, so your own speech is added from your microphone.
+    </p>
+    <ul class="grant-points">
+      <li>Your microphone is added to the <strong>downloaded file only</strong> — never
+        shown in the live transcript.</li>
+      <li>It is never played back through your speakers.</li>
+      <li>You can turn it off any time under the gear in the panel.</li>
+    </ul>
+    <p class="grant-why">
+      Chrome only shows the microphone prompt on a normal page, which is why this
+      tab opened. Allowing here applies to TabScribe everywhere, once.
+    </p>
+    <p class="actions grant-actions">
+      <button id="allowBtn" class="primary">Allow microphone</button>
+      <button id="skipBtn">Not now</button>
+    </p>
+    <p class="status" id="grantStatus" role="status" aria-live="polite"></p>
+  </main>
+  <script type="module" src="mic-permission.js"></script>
+</body>
+</html>

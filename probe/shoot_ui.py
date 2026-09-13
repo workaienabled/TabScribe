@@ -36,6 +36,16 @@ try:
     # The microphone option, which lives with the other occasional settings.
     ui.js("document.getElementById('includeMic').scrollIntoView({block:'nearest'})")
     ui.shot('focused-mic-option')
+    # The page that actually asks for the microphone, in a tab. Shot from a
+    # throwaway target so the panel session below is untouched.
+    panel_tid, panel_sid = ui.tid, ui.sid
+    ui.tid, ui.sid = ui.chrome.new_tab(
+        f'chrome-extension://{ui.ext_id}/mic-permission.html')
+    ui.chrome.wait_for_js(ui.sid, "!!document.getElementById('allowBtn')", timeout=20)
+    ui.size(880, 620)
+    ui.shot('mic-permission-page')
+    ui.chrome.send('Target.closeTarget', targetId=ui.tid)
+    ui.tid, ui.sid = panel_tid, panel_sid
     ui.size(300, 400)
     ui.shot('focused-short-preferences')
     ui.js("document.getElementById('clearBtn').scrollIntoView({block:'nearest'})")

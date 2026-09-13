@@ -61,6 +61,13 @@ def arm_capture(ui):
     ui.chrome.send('Page.addScriptToEvaluateOnNewDocument', session_id=ui.sid, source="""
       (() => {
         const realGum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+        // The panel only opens the microphone when the grant already exists, so
+        // the leak race is unreachable without this. Reporting 'granted' is the
+        // state a user reaches by allowing once on mic-permission.html.
+        const realQuery = navigator.permissions.query.bind(navigator.permissions);
+        navigator.permissions.query = (desc) => (desc && desc.name === 'microphone')
+          ? Promise.resolve({state: 'granted', onchange: null})
+          : realQuery(desc);
         navigator.mediaDevices.getUserMedia = (constraints) => {
           const isTab = !!(constraints && constraints.audio && constraints.audio.mandatory
                            && constraints.audio.mandatory.chromeMediaSource === 'tab');
@@ -99,11 +106,15 @@ def mic_permission(ui):
     ui.size(380, 720)
 
     # --- the permission is not requestable at runtime ------------------------
+    # audioCapture is a Chrome-App permission: declaring it in an extension makes
+    # Chrome warn "'audioCapture' is only allowed for packaged apps" and grants
+    # nothing. The grant comes from mic-permission.html instead, asserted in
+    # probe/mic_grant_test.py.
     manifest = ui.js("chrome.runtime.getManifest()")
-    ui.check('audioCapture is a required manifest permission, not an optional one',
-             'audioCapture' in manifest['permissions']
+    ui.check('audioCapture is declared nowhere in the manifest',
+             'audioCapture' not in (manifest.get('permissions') or [])
              and 'audioCapture' not in (manifest.get('optional_permissions') or []),
-             {'permissions': manifest['permissions'],
+             {'permissions': manifest.get('permissions'),
               'optional': manifest.get('optional_permissions')})
 
     # The exact call the first implementation made. It must be proven impossible

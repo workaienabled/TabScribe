@@ -72,6 +72,18 @@ select { min-height: 28px; padding: 4px 6px; border: 1px solid var(--border); bo
 .mic-check { margin-top: 8px; }
 #micHint { margin: 4px 0 0; }
 #micHint.denied { color: var(--danger); }
+.mic-grant { margin-top: 6px; font-size: 11.5px; padding: 3px 10px; }
+
+/* The standalone page that asks for the microphone. It is a real page rather
+   than panel chrome, so it brings its own centred layout. */
+.grant-page { display: block; overflow: auto; padding: 32px 20px; }
+.grant { max-width: 34rem; margin: 0 auto; }
+.grant h1 { font-size: 19px; margin: 0 0 12px; }
+.grant-lead { margin: 0 0 14px; }
+.grant-points { margin: 0 0 16px; padding-left: 18px; color: var(--muted); font-size: 13px; }
+.grant-points li { margin-bottom: 6px; }
+.grant-why { color: var(--muted); font-size: 12.5px; margin: 0 0 18px; }
+.grant-actions { display: flex; gap: 8px; }
 .field-hint { color: var(--muted); font-size: 11px; margin: 8px 0; }
 #clearBtn { margin-top: 4px; }
 

@@ -109,6 +109,24 @@ export class MicTranscriber {
   }
 
   /**
+   * Has the user already allowed the microphone for this extension's origin?
+   *
+   * Returns 'granted' | 'denied' | 'prompt' | 'unknown'. Never prompts, never
+   * throws. This is what lets the panel avoid calling getUserMedia at all in a
+   * surface that cannot show a prompt: a request in state 'prompt' would be
+   * auto-rejected as "Permission dismissed" and look like a refusal the user
+   * never made.
+   */
+  static async permissionState() {
+    try {
+      const status = await navigator.permissions.query({ name: 'microphone' });
+      return status.state;
+    } catch (e) {
+      return 'unknown';
+    }
+  }
+
+  /**
    * Open the microphone. MUST be called synchronously from a user gesture.
    *
    * Measured on Chrome 151 (probe/spike_permission.py): in a side panel with no

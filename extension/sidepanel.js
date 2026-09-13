@@ -38,6 +38,7 @@ const el = {
   copyToast: document.getElementById('copyToast'),
   includeMic: document.getElementById('includeMic'),
   micHint: document.getElementById('micHint'),
+  micGrant: document.getElementById('micGrantBtn'),
   prefsBtn: document.getElementById('prefsBtn'),
   theme: document.getElementById('themeSel'),
   fontSize: document.getElementById('fontSizeSel'),
@@ -95,6 +96,9 @@ let mic = null;
 // Set when the microphone failed this session, so Start does not re-prompt on
 // every press. Cleared when the user toggles the option or reloads the panel.
 let micBlocked = false;
+// Whether the microphone grant already exists for this extension's origin. The
+// panel cannot create it — see mic-permission.html — so it only reads it.
+let micGranted = false;
 let graph = null;
 let stream = null;
 let targetTabId = null;
@@ -780,11 +784,16 @@ async function refreshTarget() {
 async function start({ gesture = false } = {}) {
   el.start.disabled = true;
   // FIRST, synchronously: the user's click is a live gesture right now, and
-  // getUserMedia in a side panel is refused without one — with no prompt shown.
-  // Everything below this line awaits, which would destroy the gesture.
-  // Only ask when capture is already armed, so the microphone can never queue
-  // ahead of the tab-capture request the user actually came for.
-  const pendingMic = (gesture && armed && !micBlocked) ? requestMicStream() : null;
+  // everything below this line awaits, which would destroy it.
+  //
+  // micGranted is the load-bearing term. A side panel CANNOT show the microphone
+  // prompt: without a stored grant, getUserMedia here is auto-rejected as
+  // "Permission dismissed" and the panel would report a refusal the user was
+  // never asked for. So it only opens the microphone once the grant already
+  // exists; obtaining it is mic-permission.html's job, in a tab.
+  // `armed` keeps the microphone from ever queueing ahead of tab capture.
+  const pendingMic = (gesture && armed && micGranted && !micBlocked)
+    ? requestMicStream() : null;
   setState('starting');
   setStatus('Preparing…');
 
@@ -989,6 +998,42 @@ async function attachMic(pending, lang, processLocally) {
 function setMicHint(text, denied) {
   el.micHint.textContent = text;
   el.micHint.classList.toggle('denied', !!denied);
+}
+
+/**
+ * Reflect the real permission state in the preferences row.
+ *
+ * Called on load and whenever the option is ticked, so the panel never implies
+ * the microphone is working when the grant does not exist.
+ */
+async function refreshMicPermission() {
+  const state = await MicTranscriber.permissionState();
+  micGranted = state === 'granted';
+  el.micGrant.hidden = !el.includeMic.checked || micGranted;
+  if (!el.includeMic.checked) return state;
+  if (micGranted) {
+    setMicHint('Your own speech is added to the downloaded transcript only — '
+      + 'never shown live.', false);
+  } else if (state === 'denied') {
+    setMicHint('Chrome is blocking the microphone for TabScribe. Allow it from the '
+      + 'address-bar icon, then press Start again.', true);
+  } else {
+    setMicHint('Your own speech is added to the downloaded transcript only — never '
+      + 'shown live. Chrome needs to ask for the microphone once.', false);
+  }
+  return state;
+}
+
+/**
+ * Open the page that can actually ask. A side panel cannot show the prompt, so
+ * this is the only way to obtain the grant (measured — see mic-permission.js).
+ */
+async function openMicPermissionPage() {
+  try {
+    await chrome.tabs.create({ url: chrome.runtime.getURL('mic-permission.html') });
+  } catch (e) {
+    setMicHint(`Could not open the microphone page: ${e && e.message ? e.message : e}`, true);
+  }
 }
 
 /**
@@ -1223,21 +1268,27 @@ el.includeMic.addEventListener('change', () => {
   if (el.includeMic.checked) {
     // A deliberate re-tick is the user asking to try again.
     micBlocked = false;
-    setMicHint('Your own speech is added to the downloaded transcript only — never shown live. Needs microphone permission.', false);
-    // Mid-meeting the Start gesture is long gone, so the microphone cannot be
-    // opened without a prompt Chrome will refuse to show. Ticking the box IS a
-    // gesture, so the request is made right here, synchronously.
-    if (transcriber?.running && !mic?.running) {
+    // Ticking is a gesture, but a gesture is not enough in a side panel: without
+    // a stored grant the request is auto-rejected with no prompt. Ask for the
+    // stream only when the grant already exists; otherwise show the button that
+    // opens the page which CAN prompt.
+    if (micGranted && transcriber?.running && !mic?.running) {
       attachMic(requestMicStream(), el.lang.value, el.localOnly.checked);
     }
+    refreshMicPermission();
   } else if (mic) {
     // Turning it off releases the microphone immediately. Text already captured
     // is kept: the user may re-enable before saving, and silently discarding it
     // on a stray click would be the destructive choice.
     mic.stop({ flushMs: 0 });
     setMicHint('Microphone off. Your own speech will not be added to the saved file.', false);
+    el.micGrant.hidden = true;
+  } else {
+    setMicHint('Microphone off. Your own speech will not be added to the saved file.', false);
+    el.micGrant.hidden = true;
   }
 });
+el.micGrant.addEventListener('click', openMicPermissionPage);
 el.selectToCopy.addEventListener('change', () => {
   savePrefsFromUi();
   // Turning it on mid-selection should not retroactively copy what is already
@@ -1300,6 +1351,10 @@ async function previewModelState() {
   // makes the UI visibly flip, and worse, the model check and capture arming
   // below would run against defaults rather than the user's chosen values.
   applyPrefs(await prefs.load());
+  // Read the real grant state before anything reports on the microphone. This
+  // never prompts; it only decides whether Start may open the microphone and
+  // whether the "Allow microphone…" button is offered.
+  await refreshMicPermission();
 
   let handoff = { received: false, resume: false };
   if (IS_WINDOW) {
@@ -1322,11 +1377,11 @@ async function previewModelState() {
     // The side panel was transcribing when the user popped out; pick up where it
     // left off rather than making them press Start again.
     //
-    // No gesture here: this runs on document load, so the microphone cannot be
-    // requested (Chrome auto-denies without prompting). The meeting transcript
-    // resumes normally; the microphone picks up when the user next acts.
+    // No gesture here, so the microphone is not opened on this path even when
+    // granted; the meeting transcript is what must resume. The user's next Start
+    // in this window picks the microphone up.
     await start();
-    if (el.includeMic.checked && !mic?.running) {
+    if (el.includeMic.checked && micGranted && !mic?.running) {
       setMicHint('Press Stop and Start in this window to include your microphone.', false);
     }
     return;

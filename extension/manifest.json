@@ -8,8 +8,7 @@
     "tabCapture",
     "sidePanel",
     "storage",
-    "activeTab",
-    "audioCapture"
+    "activeTab"
   ],
   "background": {
     "service_worker": "background.js",

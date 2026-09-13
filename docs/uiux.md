@@ -100,31 +100,48 @@ transcript untouched.
 ### The permission bug, and what it taught
 
 The first implementation announced "Microphone permission was refused" without
-ever prompting. Two independent faults, both measured rather than guessed:
+ever prompting. It took three rounds to find the real rule, and the first two
+fixes were both wrong:
 
 1. `audioCapture` **cannot** be an optional permission. `chrome.permissions
    .request({permissions:['audioCapture']})` rejects with *"Only permissions
-   specified in the manifest may be requested"* (`probe/spike_permission.py`). It
-   is now a required manifest permission.
-2. The `catch` around that rejection treated it as success and fell through to
-   `getUserMedia`. In a side panel with **no live user gesture**, Chrome rejects
-   that with `NotAllowedError` and **shows no prompt at all** — so the extension
-   reported a refusal the user was never allowed to make.
+   specified in the manifest may be requested"* (`probe/spike_permission.py`).
+2. So it was moved to a required manifest permission — also wrong. Chrome warns
+   **"'audioCapture' is only allowed for packaged apps, but this is a
+   extension."** and grants nothing. It is a Chrome-App permission; extensions
+   have no manifest permission for the microphone at all.
+3. The actual rule, measured in `probe/spike_real_grant.py`: the microphone is a
+   normal **content setting on the extension's origin**. A side panel cannot
+   raise the prompt — `getUserMedia` there is rejected `NotAllowedError`
+   "Permission dismissed" with nothing shown — but once the grant exists for
+   `chrome-extension://<id>`, the side panel opens the microphone **silently**
+   (`permissionState: 'granted'`, a real stream).
+
+Google's own `offscreen-user-media` sample uses exactly this shape: prompt from a
+page in a tab, then capture from a surface that cannot prompt.
+
+So `extension/mic-permission.html` is a normal extension page, opened in a tab by
+the **Allow microphone…** button under the gear. It asks once; the grant persists
+for the origin and every later session just works. `MicTranscriber
+.permissionState()` reads that state without prompting, and `start()` opens the
+microphone only when it is already `granted` — so the panel can never again
+report a refusal the user was not asked for.
 
 The fix is structural. `start({gesture})` takes the caller's word for whether a
 live user activation exists, and the microphone is requested **synchronously**
 as the first statement, before any `await`:
 
 ```js
-const pendingMic = (gesture && armed && !micBlocked) ? requestMicStream() : null;
+const pendingMic = (gesture && armed && micGranted && !micBlocked)
+  ? requestMicStream() : null;
 ```
 
-`gesture: true` is passed by exactly three callers, all of them real clicks: the
-Start button, and the two buttons inside the model notice. The pop-out resume and
-the re-arm after a hand-off run on load or programmatically, so they pass the
-default `false` and never ask — asking there produces the phantom refusal, since
-Chrome auto-denies without prompting. The `armed` term matters too: it means the
-microphone can never queue ahead of the tab-capture request the user came for.
+Every term is load-bearing. `gesture: true` is passed by exactly three callers,
+all real clicks: the Start button and the two buttons in the model notice; the
+pop-out resume and the re-arm after a hand-off pass the default `false`.
+`micGranted` is the one that prevents the original bug outright — without a
+stored grant the panel does not call `getUserMedia` at all. `armed` keeps the
+microphone from ever queueing ahead of the tab-capture request the user came for.
 
 `classify()` names what actually failed (`denied`, `dismissed`, `no-device`,
 `device-busy`, `unsupported`, `failed`), and only a real denial says the

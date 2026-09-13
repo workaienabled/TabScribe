@@ -62,12 +62,16 @@ The tab carries every voice except yours. Turning on **Include my microphone in
 the saved file** transcribes your microphone in parallel and merges it into the
 file written by **Download**, labelled `You:` against `Meeting:`.
 
-- It is **on by default**. Chrome asks for microphone access the first time you
-  press **Start**; the request is made from that click, because Chrome refuses
-  a microphone request that is not tied to a real user action.
-- For the same reason, popping out into a window resumes the **meeting**
-  transcript immediately but not the microphone: that resume is automatic, not a
-  click. Press Stop then Start in the window to include your microphone there.
+- It is **on by default**, and needs a one-time permission. A side panel cannot
+  show Chrome's microphone prompt at all, so TabScribe opens a normal tab
+  (**Allow microphone…** under the gear) that can. Allow it once and the panel
+  uses the microphone from then on, in every meeting, with no further prompts.
+- Until that grant exists, TabScribe simply does not use the microphone. It never
+  asks in the panel, because a request there is refused without ever showing you
+  a prompt — which would look like a refusal you never made.
+- Popping out into a window resumes the **meeting** transcript immediately but
+  not the microphone: that resume is automatic, not a click. Press Stop then
+  Start in the window to include your microphone there.
 - If you say no, or dismiss the prompt, or have no microphone, **the meeting
   transcript is completely unaffected** — same live text, same saved file. The
   reason is reported next to the option, never as a recognition error, and the
