@@ -323,12 +323,13 @@ export class Transcriber {
 
     this.track = track;
     this.options = { lang, processLocally };
+    // Every recognizer instance starts result indices at zero. A manual Start
+    // after Stop must get fresh keys too, or it overwrites the previous session.
+    this.store.newEpoch();
     if (!isRestart) {
       this.t0 = Date.now();
       this.restarts = 0;
       this.stopping = false;
-    } else {
-      this.store.newEpoch();
     }
 
     const rec = new SR();
