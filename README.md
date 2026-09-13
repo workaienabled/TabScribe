@@ -2,7 +2,8 @@
 
 Live transcription of a Chrome tab's audio, in a side panel or a separate window.
 The tab stays audible; no microphone is needed. Chrome 150+ is required for
-on-device recognition.
+on-device recognition. The product's scope and the founder's verbatim goal are
+recorded in [`PRODUCT.md`](PRODUCT.md).
 
 ## Install and start
 
