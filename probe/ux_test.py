@@ -61,6 +61,20 @@ class UI:
         self.js("document.body.classList.remove('view-window')")
         self.size(360)
 
+    def capture_store(self):
+        # Test-only observation of the real store during a real render. No hooks
+        # or fixtures are exposed by production code.
+        self.js("""(async () => {
+          const {TranscriptStore} = await import('./transcriber.js');
+          const original = TranscriptStore.prototype.liveSegments;
+          TranscriptStore.prototype.liveSegments = function() {
+            window.fixtureStore = this;
+            return original.call(this);
+          };
+          document.getElementById('tsToggle').dispatchEvent(new Event('change'));
+          TranscriptStore.prototype.liveSegments = original;
+        })()""")
+
     def finish(self, stage):
         self.chrome.kill()
         self.temp.cleanup()
@@ -143,9 +157,32 @@ def reading(ui):
     ui.check('invalid stored choices fall back safely', ui.js("document.getElementById('themeSel').value === 'system' && getComputedStyle(document.getElementById('transcript')).fontSize === '16px'"))
 
 
+def navigation(ui):
+    ui.fixture()
+    ui.capture_store()
+    ui.js("document.getElementById('transcript').scrollTop = 0")
+    time.sleep(.2)
+    ui.js("fixtureStore.update(80, 'New words arriving while you read older text.', true, 210000); document.getElementById('tsToggle').dispatchEvent(new Event('change'))")
+    ui.check('new transcript text does not pull reader to bottom', ui.js("document.getElementById('transcript').scrollTop < 5"))
+    available = ui.js("!!document.getElementById('jumpLatestBtn') && !document.getElementById('jumpLatestBtn').hidden")
+    ui.check('jump-to-latest appears while reading history', available)
+    if not available:
+        return
+    ui.js("document.getElementById('jumpLatestBtn').click()")
+    ui.check('jump returns to latest text', ui.js("(() => { const t=document.getElementById('transcript'); return t.scrollHeight-t.scrollTop-t.clientHeight<5; })()"))
+    ui.js("fixtureStore.update(81, 'More incoming words at the bottom.', true, 211000); document.getElementById('tsToggle').dispatchEvent(new Event('change'))")
+    ui.check('following resumes after jump', ui.js("(() => { const t=document.getElementById('transcript'); return t.scrollHeight-t.scrollTop-t.clientHeight<5; })()"))
+    ui.js("document.getElementById('autoscroll').checked=false; document.getElementById('autoscroll').dispatchEvent(new Event('change')); document.getElementById('transcript').scrollTop=0")
+    time.sleep(.2)
+    ui.js("fixtureStore.update(82, 'Auto-scroll is now turned off.', true, 212000); document.getElementById('tsToggle').dispatchEvent(new Event('change'))")
+    ui.check('auto-scroll off remains respected', ui.js("document.getElementById('transcript').scrollTop < 5"))
+    ui.js("document.getElementById('jumpLatestBtn').click()")
+    ui.check('jump does not silently enable auto-scroll', ui.js("!document.getElementById('autoscroll').checked"))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('stage', choices=['shell', 'reading'])
+    parser.add_argument('stage', choices=['shell', 'reading', 'navigation'])
     args = parser.parse_args()
     ui = UI()
     try:

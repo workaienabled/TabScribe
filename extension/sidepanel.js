@@ -41,6 +41,7 @@ const el = {
   prefsPanel: document.getElementById('prefsPanel'),
   toast: document.getElementById('toast'),
   transcript: document.getElementById('transcript'),
+  jumpLatest: document.getElementById('jumpLatestBtn'),
   empty: document.getElementById('emptyHint'),
   status: document.getElementById('status'),
   dot: document.getElementById('dot'),
@@ -194,6 +195,28 @@ function selectionIntersects(sel, node) {
 const nodes = new Map();
 let lastStore = null;
 let heldUpdates = false;
+let following = true;
+
+function nearLatest() {
+  return el.transcript.scrollHeight - el.transcript.scrollTop - el.transcript.clientHeight < 48;
+}
+
+function refreshJumpButton() {
+  el.jumpLatest.hidden = !lastStore || lastStore.isEmpty() || nearLatest();
+}
+
+el.transcript.addEventListener('scroll', () => {
+  following = nearLatest();
+  refreshJumpButton();
+}, { passive: true });
+el.jumpLatest.addEventListener('click', () => {
+  // An explicit jump may release a selection; incoming text never does.
+  if (transcriptSelection()) window.getSelection().removeAllRanges();
+  following = true;
+  el.transcript.scrollTop = el.transcript.scrollHeight;
+  refreshJumpButton();
+  el.transcript.focus({preventScroll: true});
+});
 
 function makeRow(key) {
   const row = document.createElement('div');
@@ -268,9 +291,10 @@ function render(store) {
   el.transcript.classList.toggle('holding', !!sel);
 
   // Autoscrolling while the user is dragging moves the text under the cursor.
-  if (el.autoscroll.checked && !sel) {
+  if (el.autoscroll.checked && following && !sel) {
     el.transcript.scrollTop = el.transcript.scrollHeight;
   }
+  refreshJumpButton();
 }
 
 function refreshSelectionUi() {
@@ -866,6 +890,8 @@ function clear() {
   nodes.clear();
   heldUpdates = false;
   el.transcript.replaceChildren(el.empty);
+  following = true;
+  el.jumpLatest.hidden = true;
   el.empty.style.display = '';
   el.words.textContent = '0 words';
   el.copy.disabled = el.download.disabled = el.clear.disabled = true;

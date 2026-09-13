@@ -114,6 +114,8 @@ select { width: 100%; min-height: 36px; padding: 6px 9px; border: 1px solid var(
 .stats { min-width: 0; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 .actions { display: flex; gap: 4px; }
 .actions button { font-size: 12px; padding: 5px 8px; }
+.jump-latest { position: absolute; z-index: 3; right: 14px; bottom: 64px; border-radius: 99px; background: var(--surface); color: var(--accent); box-shadow: 0 2px 8px #0002; font-size: 11px; }
+body:has(.jump-latest:not([hidden])) .toast { bottom: 106px; }
 .toast { position: absolute; z-index: 8; left: 50%; bottom: 64px; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 4px 12px; border-radius: 99px; background: var(--fg); color: var(--bg); font-size: 11px; pointer-events: none; opacity: 0; transition: opacity .12s ease-out; }
 .toast.show { opacity: .95; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
