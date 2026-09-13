@@ -1,0 +1,27 @@
+{
+  "api_surface": {
+    "installLength": 1,
+    "availableLength": 1,
+    "installSource": "function install() { [native code] }",
+    "staticKeys": [
+      "length",
+      "name",
+      "prototype",
+      "available",
+      "install"
+    ],
+    "protoKeys": [
+      "onaudiostart",
+      "onsoundstart",
+      "onspeechstart",
+      "onspeechend",
+      "onsoundend",
+      "onaudioend",
+      "onresult",
+      "onnomatch",
+      "onerror",
+      "onstart",
+      "onend"
+    ]
+  }
+}

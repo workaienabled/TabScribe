@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>SODA probe</title></head>
+<body>
+<h1>On-device speech recognition probe</h1>
+<pre id="out">running…</pre>
+<script>
+window.__probe = async function () {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const result = {
+    userAgent: navigator.userAgent,
+    secureContext: window.isSecureContext,
+    hasSpeechRecognition: !!SR,
+    ctorName: SR ? SR.name : null,
+    hasAvailableStatic: !!(SR && SR.available),
+    hasInstallStatic: !!(SR && SR.install),
+    protoHasProcessLocally: !!(SR && 'processLocally' in SR.prototype),
+    protoHasQuality: !!(SR && 'quality' in SR.prototype),
+    availability: {},
+    errors: {},
+  };
+  if (!SR || !SR.available) return result;
+  for (const [label, opts] of Object.entries({
+    'en-US local':            { langs: ['en-US'], processLocally: true },
+    'en-US any':              { langs: ['en-US'], processLocally: false },
+    'en-US local dictation':  { langs: ['en-US'], processLocally: true, quality: 'dictation' },
+  })) {
+    try { result.availability[label] = await SR.available(opts); }
+    catch (e) { result.errors[label] = String(e); }
+  }
+  return result;
+};
+window.__install = async function () {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  try {
+    const ok = await SR.install({ langs: ['en-US'], processLocally: true });
+    const after = await SR.available({ langs: ['en-US'], processLocally: true });
+    return { installReturned: ok, availabilityAfter: after };
+  } catch (e) { return { error: String(e) }; }
+};
+(async () => { document.getElementById('out').textContent = JSON.stringify(await window.__probe(), null, 2); })();
+</script>
+</body>
+</html>

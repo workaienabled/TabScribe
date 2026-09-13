@@ -1,0 +1,44 @@
+{
+  "api_surface": {
+    "keys": [
+      "onClosed",
+      "onOpened",
+      "close",
+      "getLayout",
+      "getOptions",
+      "getPanelBehavior",
+      "open",
+      "setOptions",
+      "setPanelBehavior",
+      "Side"
+    ],
+    "hasClose": "function",
+    "hasOpen": "function",
+    "hasSetOptions": "function",
+    "hasGetOptions": "function"
+  },
+  "close_method": {
+    "{}": {
+      "call": "rejected: Error: At least one of `tabId` and `windowId` must be provided",
+      "panel_gone": false
+    },
+    "{tabId}": {
+      "call": "rejected: Error: No active tab-specific side panel for tabId: 774169005",
+      "panel_gone": false
+    },
+    "{windowId}": {
+      "call": "resolved",
+      "panel_gone": true
+    }
+  },
+  "window_close": {
+    "panel_gone": true
+  },
+  "set_options_disable": {
+    "disable": "resolved",
+    "panel_gone": false,
+    "reenable": "resolved",
+    "sprang_back_open": true,
+    "toolbar_works_after": true
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "TabScribe",
+  "version": "1.0.0",
+  "description": "Live on-device transcription of any Chrome tab's audio, with copy and export. Uses the same speech engine as Chrome Live Caption.",
+  "minimum_chrome_version": "150",
+  "permissions": [
+    "tabCapture",
+    "sidePanel",
+    "storage",
+    "activeTab"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "TabScribe: transcribe this tab's audio"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

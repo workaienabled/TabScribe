@@ -1,0 +1,289 @@
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #1f1f1f;
+  --muted: #5f6368;
+  --border: #dadce0;
+  --accent: #1a73e8;
+  --accent-fg: #ffffff;
+  --interim: #80868b;
+  --danger: #c5221f;
+  --ok: #188038;
+  --surface: #f8f9fa;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #202124;
+    --fg: #e8eaed;
+    --muted: #9aa0a6;
+    --border: #3c4043;
+    --accent: #8ab4f8;
+    --accent-fg: #202124;
+    --interim: #9aa0a6;
+    --danger: #f28b82;
+    --ok: #81c995;
+    --surface: #292a2d;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.title { display: flex; align-items: center; gap: 8px; }
+
+/* Pop-out is a labelled control, not a bare glyph: an unlabelled icon tucked in the
+   header was easy to miss entirely. Outlined in the accent colour so it reads as an
+   available action without competing with the primary Start button. */
+button.popout {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px;
+  color: var(--accent);
+  border-color: var(--accent);
+  background: transparent;
+  font-weight: 500;
+  white-space: nowrap;
+}
+button.popout:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+.popout-icon { font-size: 13px; line-height: 1; }
+
+/* Below ~340px the row cannot hold "Open in window" as text — measured, see
+   measure_button_row.py. Drop to the icon alone rather than wrapping the whole
+   row onto a second line; the title attribute still names it. */
+@media (max-width: 340px) {
+  button.popout .popout-label { display: none; }
+  button.popout { padding: 5px 9px; }
+}
+
+/* Preferences disclosure. The options are set-once-and-forget, so they stay out
+   of the way until asked for; only Start/Stop/Open-in-window are always shown.
+
+   Icon-only, because the labelled version pushed the row onto a second line at
+   any panel narrower than ~430px — measured, see measure_button_row.py. The
+   accessible name comes from aria-label, and the tooltip from title. */
+button.prefs-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 5px 8px;
+  flex: none;
+  /* Match the text buttons' height exactly. An SVG-only button is sized by the
+     icon, which left it 2px shorter and visibly off the row's baseline. */
+  align-self: stretch;
+}
+.gear {
+  display: block;
+  transition: transform .15s ease-out;
+}
+/* Turn the gear when the group is open: a rotation reads as "engaged" without
+   needing a second glyph, and the panel below is the actual state indicator. */
+button.prefs-toggle[aria-expanded="true"] .gear { transform: rotate(45deg); }
+button.prefs-toggle[aria-expanded="true"] {
+  color: var(--fg); border-color: var(--muted);
+}
+.prefs-panel[hidden] { display: none; }
+.prefs-panel { border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .gear { transition: none; }
+}
+
+/* In the popped-out window there is nothing to pop out of. */
+body.view-window #popoutBtn { display: none; }
+
+.dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--muted); flex: none;
+}
+.dot[data-state="listening"] { background: var(--ok); animation: pulse 1.6s ease-in-out infinite; }
+.dot[data-state="error"] { background: var(--danger); }
+.dot[data-state="starting"], .dot[data-state="restarting"] { background: var(--accent); animation: pulse 1s linear infinite; }
+
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+.target {
+  font-size: 11px; color: var(--muted);
+  max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.controls {
+  display: flex; gap: 6px; align-items: center;
+  padding: 8px 12px;
+  flex-wrap: wrap;
+}
+/* The language select wraps to its own line in a narrow panel; left-align it there
+   rather than letting it sit stranded against the right edge. */
+.controls > select { flex: 1 1 auto; min-width: 130px; }
+.controls.secondary { padding-top: 0; flex-wrap: wrap; gap: 10px; }
+
+button {
+  font: inherit; padding: 5px 12px; border-radius: 4px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--fg);
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; font-weight: 500; }
+button.danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+
+select {
+  font: inherit; padding: 5px 6px; border-radius: 4px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--fg);
+  margin-left: auto;
+}
+
+.check { display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--muted); cursor: pointer; }
+.check input { margin: 0; }
+
+.status {
+  padding: 0 12px 8px; font-size: 11.5px; color: var(--muted); min-height: 0;
+}
+.status.error { color: var(--danger); }
+.status:empty { display: none; }
+
+/* ---- first-run model download notice ---- */
+
+.model-panel {
+  margin: 0 12px 10px; padding: 10px 11px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface);
+}
+.model-panel[hidden] { display: none; }
+
+.model-head { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; }
+.model-icon { color: var(--accent); font-size: 13px; }
+.model-panel.failed .model-icon { color: var(--danger); }
+.model-head strong { font-size: 12.5px; }
+
+.model-body { margin: 0 0 8px; font-size: 11.5px; color: var(--muted); line-height: 1.45; }
+
+/* Indeterminate by design: Chrome's install() reports no download progress
+   (verified — no monitor callback, no downloadprogress events), so a percentage
+   would be invented. A gradient sweeps across a filled track, which reads as
+   "working" without ever rendering empty — a bar that slides fully off-screen
+   looks stalled at the ends of its cycle. */
+.model-bar {
+  height: 4px; border-radius: 2px; background: var(--border);
+  overflow: hidden; position: relative;
+}
+.model-bar-fill {
+  position: absolute; inset: 0;
+  border-radius: 2px;
+  background: linear-gradient(90deg,
+    var(--border) 0%, var(--accent) 35%, var(--accent) 65%, var(--border) 100%);
+  background-size: 220% 100%;
+  animation: sweep 1.5s linear infinite;
+}
+.model-panel.failed .model-bar-fill {
+  animation: none; background: var(--danger);
+}
+.model-panel.idle .model-bar-fill { animation: none; background: var(--border); }
+
+@keyframes sweep {
+  0%   { background-position: 120% 0; }
+  100% { background-position: -120% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-bar-fill { animation-duration: 3s; }
+}
+
+.model-meta {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 8px; margin: 6px 0 0; font-size: 11px; color: var(--muted);
+}
+.model-elapsed { font-variant-numeric: tabular-nums; }
+
+.model-hint { margin: 6px 0 0; font-size: 10.5px; color: var(--muted); opacity: .85; line-height: 1.4; }
+.model-hint[hidden] { display: none; }
+
+.model-actions { display: flex; gap: 6px; margin-top: 9px; }
+.model-actions[hidden] { display: none; }
+.model-actions button { padding: 3px 9px; font-size: 11.5px; }
+
+.transcript {
+  flex: 1; overflow-y: auto; padding: 4px 12px 12px;
+  user-select: text; white-space: pre-wrap; word-break: break-word;
+  scroll-behavior: auto;
+}
+
+/* While text is selected, live updates to the selected lines are held back and
+   autoscroll is paused, so the selection cannot be pulled out from under the user.
+   The left rule is the only hint that anything is being deferred. */
+.transcript.holding {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* A brief, quiet confirmation that a selection was auto-copied. This replaced a
+   full-pane background flash, which was distracting on every selection: the copy
+   happens constantly while reading, so the feedback has to be small and local. */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 52px;
+  transform: translateX(-50%) translateY(4px);
+  padding: 4px 12px;
+  border-radius: 12px;
+  background: var(--fg);
+  color: var(--bg);
+  font-size: 11.5px;
+  font-weight: 500;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .12s ease-out, transform .12s ease-out;
+  z-index: 10;
+}
+.toast[hidden] { display: none; }
+.toast.show {
+  opacity: .92;
+  transform: translateX(-50%) translateY(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast { transition: none; }
+}
+
+.seg { margin: 0 0 7px; }
+.seg .ts { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11px; margin-right: 6px; }
+.seg .ts[hidden] { display: none; }
+.seg.interim { color: var(--interim); font-style: italic; }
+
+.transcript ::selection { background: var(--accent); color: var(--accent-fg); }
+
+.empty {
+  color: var(--muted); font-size: 12px; padding: 14px 2px;
+  /* The transcript uses white-space: pre-wrap to preserve recognized text exactly;
+     the placeholder is authored HTML and must not inherit that indentation. */
+  white-space: normal;
+}
+
+.footer {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 8px 12px; border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.stats { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.actions { display: flex; gap: 6px; }
+.actions button { padding: 4px 10px; }

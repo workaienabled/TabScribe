@@ -1,0 +1,112 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>MediaStreamTrack -> SpeechRecognition</title></head>
+<body>
+<h1>Track-input recognition harness</h1>
+<audio id="player" src="sample1.wav" preload="auto"></audio>
+<pre id="log"></pre>
+<script>
+const logEl = document.getElementById('log');
+const state = {
+  ready: false,
+  started: false,
+  done: false,
+  finals: [],
+  interims: [],
+  resultEvents: [],
+  events: [],
+  error: null,
+  firstResultMs: null,
+  audioEndedMs: null,
+  lastResultMs: null,
+  t0: null,
+};
+function note(msg) {
+  state.events.push({ t: Date.now() - (state.t0 || Date.now()), msg });
+  logEl.textContent = state.events.map(e => `${e.t}ms ${e.msg}`).join('\n');
+}
+
+window.__run = async function (opts) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  state.t0 = Date.now();
+  const player = document.getElementById('player');
+
+  // Wait until the media is actually decodable, otherwise captureStream()
+  // can hand back a track that never produces audio.
+  if (player.readyState < 2) {
+    await new Promise((res, rej) => {
+      player.addEventListener('canplay', res, { once: true });
+      player.addEventListener('error', () => rej(new Error('audio load failed')), { once: true });
+    });
+  }
+  note('audio ready, duration=' + player.duration.toFixed(2) + 's');
+
+  const stream = player.captureStream ? player.captureStream() : player.mozCaptureStream();
+  const track = stream.getAudioTracks()[0];
+  if (!track) throw new Error('no audio track from captureStream');
+  note('got track: ' + track.label + ' state=' + track.readyState);
+
+  const rec = new SR();
+  rec.lang = opts.lang || 'en-US';
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.processLocally = !!opts.processLocally;
+
+  rec.onresult = (e) => {
+    const now = Date.now() - state.t0;
+    if (state.firstResultMs === null) state.firstResultMs = now;
+    state.lastResultMs = now;
+
+    // Full snapshot of the results list on every event, so we can tell whether a
+    // segment was never produced by the recognizer vs. skipped by incremental
+    // resultIndex bookkeeping.
+    const snapshot = [];
+    for (let i = 0; i < e.results.length; i++) {
+      snapshot.push({ i, isFinal: e.results[i].isFinal, text: e.results[i][0].transcript });
+    }
+    state.resultEvents.push({ t: now, resultIndex: e.resultIndex, length: e.results.length, snapshot });
+
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      const txt = r[0].transcript;
+      if (r.isFinal) {
+        state.finals.push({ t: now, idx: i, text: txt, confidence: r[0].confidence });
+        note('FINAL[' + i + ']: ' + txt);
+      } else {
+        state.interims.push({ t: now, idx: i, text: txt });
+      }
+    }
+  };
+  rec.onerror = (e) => { state.error = e.error + (e.message ? (': ' + e.message) : ''); note('ERROR: ' + state.error); };
+  rec.onstart = () => note('recognition started');
+  rec.onend = () => { note('recognition ended'); state.done = true; };
+  rec.onaudiostart = () => note('audiostart');
+  rec.onspeechstart = () => note('speechstart');
+
+  try {
+    rec.start(track);
+    state.started = true;
+  } catch (err) {
+    state.error = 'start() threw: ' + err;
+    note(state.error);
+    return state;
+  }
+
+  player.addEventListener('ended', () => {
+    state.audioEndedMs = Date.now() - state.t0;
+    note('audio ended');
+    // Give the recognizer a grace period to flush trailing finals.
+    setTimeout(() => { try { rec.stop(); } catch (e) {} }, opts.flushMs || 3000);
+  }, { once: true });
+
+  await player.play();
+  note('playback started');
+  window.__state = state;
+  return { started: true };
+};
+
+window.__snapshot = () => state;
+window.__ready = true;
+</script>
+</body>
+</html>

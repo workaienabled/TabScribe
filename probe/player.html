@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>TabScribe test audio</title></head>
+<body style="font-family:system-ui;padding:2rem">
+<h1>TabScribe test tab</h1>
+<p>This tab plays a known speech clip used as ground truth for the end-to-end test.</p>
+<audio id="audio" preload="auto" controls></audio>
+<p id="clipName" style="color:#666;font-size:0.9em"></p>
+<script>
+const params = new URLSearchParams(location.search);
+const clip = params.get('clip') || 'sample1.wav';
+const audio = document.getElementById('audio');
+audio.src = clip;
+document.getElementById('clipName').textContent = 'clip: ' + clip;
+
+window.__play = async () => { audio.currentTime = 0; await audio.play(); return true; };
+window.__playerReady = false;
+if (audio.readyState >= 2) {
+  window.__playerReady = true;
+} else {
+  audio.addEventListener('canplay', () => { window.__playerReady = true; }, { once: true });
+}
+</script>
+</body>
+</html>

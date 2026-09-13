@@ -1,0 +1,237 @@
+/**
+ * TabScribe service worker.
+ *
+ * Panel opening strategy: handle chrome.action.onClicked and call
+ * chrome.sidePanel.open() from inside the listener.
+ *
+ * This is not a stylistic choice. The two available strategies were measured against
+ * a real toolbar click on Chrome 151:
+ *
+ *   openPanelOnActionClick: true   panel opens, but chrome.tabCapture then fails with
+ *                                  "Extension has not been invoked for the current
+ *                                  page" — Chrome opening the panel itself does NOT
+ *                                  count as an extension invocation, so no activeTab.
+ *   onClicked -> sidePanel.open()  activeTab IS granted and tabCapture succeeds.
+ *
+ * Since tab audio is the entire point of this extension, the onClicked path is the
+ * only viable one.
+ *
+ * Gesture handling: chrome.sidePanel.open() must be called while the user-gesture
+ * context is still intact. Nothing is awaited before it — storage is written after
+ * the call, and the promise is handled without blocking the listener.
+ */
+
+const TARGET_KEY = 'targetTabId';
+const WINDOW_KEY = 'popoutWindowId';
+const HANDOFF_KEY = 'handoffSnapshot';
+
+async function disableAutoOpen() {
+  // Must stay false: with true, Chrome opens the panel itself and the click no
+  // longer counts as an extension invocation (see header).
+  try {
+    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
+  } catch (e) {
+    console.error('setPanelBehavior failed:', e);
+  }
+}
+
+chrome.runtime.onInstalled.addListener(disableAutoOpen);
+chrome.runtime.onStartup.addListener(disableAutoOpen);
+disableAutoOpen();
+
+chrome.action.onClicked.addListener((tab) => {
+  if (!tab || tab.id === undefined) return;
+
+  // Call open() first, synchronously, so the user-gesture context is intact.
+  chrome.sidePanel
+    .open({ tabId: tab.id })
+    .catch((e) => console.error('sidePanel.open failed:', e));
+
+  chrome.storage.session
+    .set({ [TARGET_KEY]: tab.id, targetTabTitle: tab.title || '' })
+    .catch(() => {});
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type === 'GET_STREAM_ID') {
+    (async () => {
+      try {
+        let tabId = msg.tabId;
+        let title = '';
+
+        if (tabId === undefined) {
+          const stored = await chrome.storage.session.get([TARGET_KEY, 'targetTabTitle']);
+          tabId = stored[TARGET_KEY];
+          title = stored.targetTabTitle || '';
+        }
+        if (tabId === undefined) {
+          const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+          if (!active) throw new Error('No active tab to capture.');
+          tabId = active.id;
+          title = active.title || '';
+        }
+
+        // tabCapture requires an active extension invocation on the target tab,
+        // granted by the user's click on the toolbar action. Host permissions do
+        // NOT substitute: verified on Chrome 151 that an extension holding
+        // <all_urls> still fails with "Extension has not been invoked for the
+        // current page".
+        const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+        await chrome.storage.session.set({ [TARGET_KEY]: tabId, targetTabTitle: title });
+        sendResponse({ ok: true, streamId, tabId, title });
+      } catch (e) {
+        const message = String(e && e.message ? e.message : e);
+        sendResponse({
+          ok: false,
+          error: message,
+          needsInvocation: /has not been invoked|activeTab/i.test(message),
+        });
+      }
+    })();
+    return true; // keep the message channel open for the async response
+  }
+
+  if (msg?.type === 'GET_TARGET') {
+    (async () => {
+      try {
+        const stored = await chrome.storage.session.get([TARGET_KEY, 'targetTabTitle']);
+        if (stored[TARGET_KEY] !== undefined) {
+          sendResponse({ ok: true, tabId: stored[TARGET_KEY], title: stored.targetTabTitle || '' });
+          return;
+        }
+        const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+        sendResponse({ ok: true, tabId: active?.id, title: active?.title || '' });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
+      }
+    })();
+    return true;
+  }
+
+  // The side panel has no direct way to learn which browser window hosts it, and
+  // sidePanel.close() needs that windowId. The sender's tab carries it.
+  if (msg?.type === 'GET_HOST_WINDOW') {
+    (async () => {
+      try {
+        if (sender?.tab?.windowId !== undefined) {
+          sendResponse({ ok: true, windowId: sender.tab.windowId });
+          return;
+        }
+        const win = await chrome.windows.getLastFocused();
+        sendResponse({ ok: true, windowId: win?.id });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
+      }
+    })();
+    return true;
+  }
+
+  // Pop the panel out into its own always-visible window.
+  //
+  // Only one capture per tab is possible — verified: a second getMediaStreamId on a
+  // tab that is already captured fails with "Cannot capture a tab with an active
+  // stream." So this is a handoff: the caller releases its capture and hands over
+  // its transcript, the window restores it and re-arms.
+  if (msg?.type === 'OPEN_WINDOW') {
+    (async () => {
+      try {
+        if (msg.snapshot) {
+          await chrome.storage.session.set({
+            [HANDOFF_KEY]: { snapshot: msg.snapshot, resume: !!msg.resume },
+          });
+        }
+
+        const existing = await chrome.storage.session.get(WINDOW_KEY);
+        const existingId = existing[WINDOW_KEY];
+        if (existingId !== undefined) {
+          try {
+            await chrome.windows.update(existingId, { focused: true, drawAttention: true });
+            sendResponse({ ok: true, windowId: existingId, reused: true });
+            return;
+          } catch (e) {
+            // Window was closed since it was recorded; fall through and make a new one.
+            await chrome.storage.session.remove(WINDOW_KEY);
+          }
+        }
+
+        // Window size: the stored preference is the authority, because the
+        // window records its own size on resize and the requesting panel may
+        // hold a stale cached value. The message is only a fallback.
+        let width = msg.width || 460;
+        let height = msg.height || 780;
+        try {
+          const stored = (await chrome.storage.local.get('prefs'))?.prefs || {};
+          if (typeof stored.windowWidth === 'number' && stored.windowWidth >= 200) {
+            width = stored.windowWidth;
+          }
+          if (typeof stored.windowHeight === 'number' && stored.windowHeight >= 200) {
+            height = stored.windowHeight;
+          }
+        } catch (e) { /* fall back to the message values */ }
+
+        const win = await chrome.windows.create({
+          url: chrome.runtime.getURL('sidepanel.html?view=window'),
+          type: 'popup',
+          width,
+          height,
+          focused: true,
+        });
+        await chrome.storage.session.set({ [WINDOW_KEY]: win.id });
+
+        // Close the side panel so only the window remains. Verified on Chrome 151:
+        // close() requires a CloseOptions argument — `{}` is rejected with "At least
+        // one of `tabId` and `windowId` must be provided", and `{tabId}` with "No
+        // active tab-specific side panel", because this panel is window-scoped.
+        // `{windowId}` is the shape that works. setOptions({enabled:false}) does NOT
+        // close an open panel, so it is not a fallback.
+        let panelClosed = false;
+        if (msg.closePanel !== false && msg.sourceWindowId !== undefined) {
+          try {
+            await chrome.sidePanel.close({ windowId: msg.sourceWindowId });
+            panelClosed = true;
+          } catch (e) {
+            // Not fatal: the pop-out window is already open and usable. Older Chrome
+            // builds have no close() at all.
+            console.warn('sidePanel.close failed:', e);
+          }
+        }
+
+        sendResponse({ ok: true, windowId: win.id, reused: false, panelClosed });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
+      }
+    })();
+    return true;
+  }
+
+  // The window claims the handoff snapshot exactly once, so a later reload of the
+  // window does not resurrect a stale transcript.
+  if (msg?.type === 'CLAIM_HANDOFF') {
+    (async () => {
+      try {
+        const stored = await chrome.storage.session.get(HANDOFF_KEY);
+        await chrome.storage.session.remove(HANDOFF_KEY);
+        const payload = stored[HANDOFF_KEY] || null;
+        sendResponse({
+          ok: true,
+          snapshot: payload ? payload.snapshot : null,
+          resume: payload ? !!payload.resume : false,
+        });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
+      }
+    })();
+    return true;
+  }
+
+  return false;
+});
+
+// Forget the pop-out window once it is gone, so the next pop-out opens a new one
+// instead of trying to focus a window that no longer exists.
+chrome.windows.onRemoved.addListener(async (windowId) => {
+  const stored = await chrome.storage.session.get(WINDOW_KEY);
+  if (stored[WINDOW_KEY] === windowId) {
+    await chrome.storage.session.remove(WINDOW_KEY);
+  }
+});

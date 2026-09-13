@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.zip
+probe/shots/
+probe/*_result.json
+probe/button_row_measurements.json
+artifacts/

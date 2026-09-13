@@ -1,0 +1,30 @@
+{
+  "side_panel_status": "Ready. Press Start to transcribe this tab.",
+  "stored_target": {
+    "targetTabId": 1518846764,
+    "targetTabTitle": ""
+  },
+  "popup_target_found": true,
+  "popup_status_while_panel_holds": "Cannot capture a tab with an active stream.",
+  "popup_probe_concurrent": {
+    "status": "Cannot capture a tab with an active stream."
+  },
+  "second_stream_id_while_panel_holds": {
+    "ok": false,
+    "error": "Error: Cannot capture a tab with an active stream."
+  },
+  "popup_capture_after_panel_released": {
+    "ok": true,
+    "tracks": 1,
+    "readyState": "live",
+    "label": ""
+  },
+  "stream_id_while_popup_focused": {
+    "ok": true
+  },
+  "target_seen_from_popup": {
+    "ok": true,
+    "tabId": 1518846764,
+    "title": ""
+  }
+}
