@@ -28,7 +28,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 TOP = os.path.basename(ROOT)
 OUT = os.path.join(ROOT, "source-code.zip")
 
-EXCLUDE_DIRS = {".git", "__pycache__", "shots"}
+EXCLUDE_DIRS = {".git", "__pycache__", "shots", "artifacts"}
 EXCLUDE_FILES = {"source-code.zip", "tabscribe-extension.zip"}
 
 
