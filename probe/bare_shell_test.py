@@ -52,6 +52,9 @@ def stripped_chrome(ui):
 
 def popout_has_a_label(ui):
     """Icon AND text: the pop-out is the one control worth naming in place."""
+    # At a comfortable width, where the label is the point. The narrow case is
+    # asserted below, because eight controls plus a word do not fit 280px.
+    ui.size(420)
     shape = ui.js("""(() => {
       const b = document.getElementById('popoutBtn');
       if (!b) return {missing: true};
@@ -64,6 +67,27 @@ def popout_has_a_label(ui):
              shape.get('hasIcon') and len(shape.get('text', '')) >= 4, shape)
     ui.check('the pop-out button still carries an accessible name',
              len(shape.get('name', '')) >= 4, shape)
+
+    # Narrow: the word goes, so eight controls still fit without shrinking any
+    # target below 28px. The name must survive, or the icon becomes unusable
+    # with a screen reader precisely where space is tightest.
+    ui.size(300)
+    narrow = ui.js("""(() => {
+      const b = document.getElementById('popoutBtn');
+      const r = b.getBoundingClientRect();
+      const label = b.querySelector('.popout-label');
+      return {labelShown: !!label && label.getBoundingClientRect().width > 0,
+              name: b.getAttribute('aria-label') || '',
+              title: b.title || '',
+              w: Math.round(r.width), h: Math.round(r.height),
+              overflow: document.documentElement.scrollWidth > innerWidth};
+    })()""")
+    ui.check('at a narrow width the pop-out sheds its word rather than the row wrapping',
+             narrow['labelShown'] is False and narrow['overflow'] is False, narrow)
+    ui.check('and it keeps its name and a usable target',
+             len(narrow['name']) >= 4 and len(narrow['title']) >= 4
+             and narrow['w'] >= 28 and narrow['h'] >= 28, narrow)
+    ui.size(420)
 
 
 def cloud_warning_survives(ui):

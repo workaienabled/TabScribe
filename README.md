@@ -30,8 +30,8 @@ accessible name; none carries its meaning in colour alone.
 - **Clear screen:** empties what is on screen **without removing anything from the
   transcript**. A line above the transcript reports how much is hidden and offers
   **Show** to bring it back; **Download still writes everything**. This is the
-  opposite of **Gear → Delete transcript**, which does remove the text from the
-  saved file.
+  opposite of **Delete transcript**, the red control at the far right, which does
+  remove the text from the saved file.
 - **Microphone status:** whether your own voice is being saved — off, ready,
   recording, blocked, or not yet permitted. In that last state it is a button, and
   pressing it opens the page that can ask for permission.
@@ -67,7 +67,8 @@ accessible name; none carries its meaning in colour alone.
 - **Include my microphone in the saved file** (on by default): also transcribes
   your own speech and merges it into the **downloaded file only**. It is never
   shown in the live transcript and never copied by Copy. See below.
-- **Gear → Delete transcript:** immediately removes the text, including the current
+- **Delete transcript** (the red control at the far end of the row, deliberately
+  away from Clear screen): immediately removes the text, including the current
   utterance, and keeps listening. Preferences close to reveal **Undo**, which
   restores the cleared text before anything received since.
   Only the most recent Clear is recoverable; recovery is held in this view's memory

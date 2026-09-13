@@ -1084,6 +1084,11 @@ async function teardown() {
 
 async function stop() {
   setRecording(false);
+  // Disabled for the duration of the teardown. stop() awaits the microphone and
+  // then the recognizer's final flush — around two seconds — and a press inside
+  // that window used to start a new session that this function then stomped on,
+  // leaving the toggle reading "recording" while the status read "Stopped."
+  el.record.disabled = true;
   setStatus('Finishing…');
   // Stop the microphone first and independently; its text is already banked in
   // its own store, and a failure here must not delay finishing the meeting.
@@ -1444,10 +1449,12 @@ function undoClear() {
 }
 
 function clear() {
-  // The occasional action lives in Preferences; reveal its result and Undo.
-  // save:false — collapsing is a consequence of Clear, not a preference the user
-  // expressed, and persisting it would also reach into the other open view.
-  setPrefsOpen(false, { save: false });
+  // Delete lives in the control row now, so there is no preferences panel to
+  // collapse. It is still closed if the user happens to have it open, because
+  // Undo appears at the bottom of the panel and a covered Undo is a lost one.
+  // save:false — collapsing is a consequence of Delete, not a preference the
+  // user expressed, and persisting it would also reach into the other open view.
+  if (!el.prefsPanel.hidden) setPrefsOpen(false, { save: false });
   el.transcript.focus({preventScroll: true});
   if (transcriber && !transcriber.store.isEmpty()) {
     clearedSnapshot = transcriber.store.serialize();

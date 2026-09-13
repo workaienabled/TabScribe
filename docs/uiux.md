@@ -131,6 +131,56 @@ rather than vanishing:
 The pop-out keeps **icon and text**. It is the one control worth naming in place:
 moving to a window is a decision, not a frequent action.
 
+## Delete in the toolbar, beside its harmless twin
+
+Delete moved out of the gear and into the control row, at the user's request. The
+risk it creates is specific: Clear screen and Delete are twins — one empties the
+view, the other empties the saved file — and side by side, losing a meeting
+becomes a one-pixel mistake. Three things keep them apart:
+
+- **Position.** Delete sits at the far end, past the gear, with Clear screen at
+  the opposite end of the row beside Copy and Download.
+- **Colour and icon.** Delete is a trash can in the danger colour *at rest*, not
+  only on hover. A control that looks safe until the pointer is already over it
+  is not a warning.
+- **Name.** "Delete transcript, including from the download" says the thing Clear
+  screen does not do.
+
+Undo still backs it, and `probe/delete_control_test.py` asserts the difference
+against the **downloaded bytes**, not the screen: Clear screen must leave the file
+whole, Delete must empty it.
+
+### The eighth control, and what the gate caught
+
+Eight controls did not fit 280px. The measurement gate caught it — but only after
+being fixed twice, because it was weaker than it looked:
+
+- It read a **different id list** from the one in its own docstring, so the new
+  control was never measured. The output quietly listed seven buttons.
+- It **skipped missing elements** entirely, so a row could "fit" precisely
+  because a control had vanished.
+- It only checked **row count**, not horizontal overflow, and started at 300px.
+  The real failure was `oneRow: true, overflow: true` at 280px.
+
+All three are now failures, and the gate runs from 280px. The layout fix sheds
+the pop-out's text label below 360px — it is the only control whose function is
+reachable elsewhere, and it keeps its accessible name and tooltip. Targets stay
+28×28; shrinking them is the trade this gate exists to refuse.
+
+### A real bug this surfaced
+
+The real-audio resume suite then failed with `aria-pressed="true"` beside a status
+reading `Stopped.` — the toggle claiming to record while nothing was.
+
+`stop()` awaits the microphone and then the recognizer's final flush, around two
+seconds, and left the control **enabled** throughout. A press inside that window
+started a new session that the still-running `stop()` then stomped on. That was a
+genuine user-facing defect introduced when Record became a single toggle, not a
+harness artifact: it is reachable by anyone who presses Record twice quickly.
+
+The control is now disabled for the duration of the teardown, and
+`delete_control_test.py` asserts it without needing audio.
+
 ## Deliberate limits
 
 No Find, transcript library, built-in AI, recording upload, automatic cloud

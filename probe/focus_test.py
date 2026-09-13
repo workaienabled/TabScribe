@@ -30,7 +30,7 @@ def focus(ui):
     ui.check('browser Find shortcut is not intercepted', ui.js("(() => { const e=new KeyboardEvent('keydown',{key:'f',ctrlKey:true,bubbles:true,cancelable:true}); document.dispatchEvent(e); return !e.defaultPrevented; })()"))
     ui.check('the footer holds status only, no duplicate actions', ui.js("document.querySelectorAll('.footer button').length === 0"))
     ui.check('copy and download are in the one control row', ui.js("(() => { const r=document.querySelector('.controls'); return r.contains(document.getElementById('copyBtn')) && r.contains(document.getElementById('downloadBtn')); })()"))
-    ui.check('Clear is an occasional action inside Preferences', ui.js("document.getElementById('prefsPanel').contains(document.getElementById('clearBtn'))"))
+    ui.check('Delete is in the control row, away from Clear screen', ui.js("(() => { const row=document.querySelector('.controls'), del=document.getElementById('clearBtn'), clr=document.getElementById('clearScreenBtn'); const items=[...row.children]; return row.contains(del) && Math.abs(items.indexOf(del)-items.indexOf(clr)) > 1; })()"))
     ui.check('download is named explicitly', ui.js("document.getElementById('downloadBtn').getAttribute('aria-label') === 'Download transcript'"))
     ui.check('no title bar or footer bar', ui.js("!document.querySelector('header.bar') && !document.querySelector('footer.footer')"))
     ui.fixture(3)

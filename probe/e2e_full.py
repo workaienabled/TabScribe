@@ -407,6 +407,9 @@ def main():
                                        await_promise=False)
         print(f"  words before stop: {words_before}", flush=True)
 
+        # The toggle is disabled while a stop tears down; a click on a disabled
+        # control does nothing, so make sure it is pressable first.
+        chrome.wait_for_js(panel_sid, "!document.getElementById('recordBtn').disabled", timeout=30)
         chrome.evaluate(panel_sid, "document.getElementById('recordBtn').click()", await_promise=False)
         deadline = time.time() + 30
         while time.time() < deadline:
@@ -460,10 +463,26 @@ def main():
         if os.environ.get('TABSCRIBE_RESUME_CHECK') == '1':
             # Repeat the known audio after a normal Stop/Start. Recognition result
             # indices restart at zero, but prior transcript text must not change.
+            chrome.wait_for_js(panel_sid, "!document.getElementById('recordBtn').disabled", timeout=30)
             chrome.evaluate(panel_sid, "document.getElementById('recordBtn').click()", await_promise=False)
-            chrome.wait_for_js(panel_sid, "document.getElementById('dot').dataset.state === 'listening'", timeout=30)
+            try:
+                chrome.wait_for_js(panel_sid, "document.getElementById('dot').dataset.state === 'listening'", timeout=30)
+            except RuntimeError:
+                diag = chrome.evaluate(panel_sid, """({
+                  dot: document.getElementById('dot').dataset.state,
+                  hidden: document.getElementById('dot').hidden,
+                  pressed: document.getElementById('recordBtn').getAttribute('aria-pressed'),
+                  disabled: document.getElementById('recordBtn').disabled,
+                  status: document.getElementById('status').textContent,
+                })""", await_promise=False)
+                print(f"  RESTART DIAGNOSTIC: {json.dumps(diag)}", flush=True)
+                raise
             chrome.evaluate(page_sid, "(() => { const a=document.getElementById('audio'); a.currentTime=0; return a.play(); })()")
             chrome.wait_for_js(page_sid, "document.getElementById('audio').ended", timeout=75)
+            # The toggle is disabled while a stop is tearing down, so wait for it
+            # to be pressable before pressing it — clicking a disabled control
+            # does nothing and the wait below would then never be satisfied.
+            chrome.wait_for_js(panel_sid, "!document.getElementById('recordBtn').disabled", timeout=30)
             chrome.evaluate(panel_sid, "document.getElementById('recordBtn').click()", await_promise=False)
             chrome.wait_for_js(panel_sid,
                                "document.getElementById('recordBtn').getAttribute('aria-pressed') === 'false'",

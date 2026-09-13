@@ -33,8 +33,14 @@ button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: .45; cursor: default; }
 button:focus-visible, select:focus-visible, input:focus-visible, .transcript:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 button.primary { font-weight: 500; background: var(--accent); color: var(--accent-fg); border-color: transparent; }
-button.danger { color: var(--muted); }
+/* Destructive, and sitting in the same row as its harmless twin (Clear screen).
+   It carries the danger colour at rest, not only on hover: a control that looks
+   identical to the safe one until you are already over it is not a warning. */
+button.danger { color: var(--danger); }
 button.danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
+/* Pushed to the far end, past the gear, so Delete is never a near-miss for
+   Clear screen. */
+button#clearBtn { margin-left: 4px; }
 
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; margin-right: 1px; }
 .dot[data-state="listening"] { background: var(--ok); }
@@ -83,6 +89,16 @@ button.mic-status[data-state="blocked"] .mic-slash { display: block; }
    floor for space that the gaps can give up instead. */
 @media (max-width: 340px) {
   .controls { gap: 2px; padding: 8px 6px; }
+}
+
+/* Eight controls do not fit a narrow panel with a text label among them. The
+   pop-out sheds its word first: it is the only control whose name is also
+   reachable elsewhere (the gear opens the same window), and it keeps its
+   accessible name and tooltip either way. Targets stay 28x28 — shrinking them
+   is the trade the measurement gate exists to refuse. */
+@media (max-width: 360px) {
+  .popout-label { display: none; }
+  button.popout { padding: 5px; width: 28px; }
 }
 
 /* flex: 0 1 auto, not none: body is overflow:hidden, so an optional panel that

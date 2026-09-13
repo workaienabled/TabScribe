@@ -4,8 +4,8 @@ The claim being tested is literal: every top control on a single row. Chrome's
 side panel is narrow and user-resizable, so this checks a range of widths rather
 than the one width a screenshot happens to use.
 
-This matters more since the row grew from four controls to seven (record, copy,
-download, clear screen, microphone, pop-out, preferences). The four-button layout
+This matters more since the row grew from four controls to eight (record, copy,
+download, clear screen, microphone, pop-out, preferences, delete). The four-button layout
 already needed icon-only controls to fit 300px, so seven is a real constraint and
 this gate is the thing that proves it rather than a screenshot at one width.
 
@@ -32,7 +32,9 @@ from pipe_chrome import PipeChrome  # noqa: E402
 HERE = os.path.dirname(os.path.abspath(__file__))
 EXT = os.path.abspath(os.path.join(HERE, "..", "extension"))
 PROFILE = "/tmp/ts-btnrow"
-WIDTHS = [300, 320, 360, 400, 430, 480]
+# 280 is the narrowest a Chrome side panel goes, and it is where the eighth
+# control first overflowed. The gate missed that because it started at 300.
+WIDTHS = [280, 300, 320, 360, 400, 430, 480]
 
 
 def unpacked_extension_id(path):
@@ -43,7 +45,7 @@ def unpacked_extension_id(path):
 MEASURE_JS = """
 (() => {
   const ids = ['recordBtn', 'copyBtn', 'downloadBtn', 'clearScreenBtn',
-               'micStatusBtn', 'popoutBtn', 'prefsBtn'];
+               'micStatusBtn', 'popoutBtn', 'prefsBtn', 'clearBtn'];
   const out = [];
   for (const id of ids) {
     const e = document.getElementById(id);
@@ -71,6 +73,15 @@ MEASURE_JS = """
   }
   const container = document.querySelector('.controls');
   return { buttons: out, rows: rows.length,
+           // A control that is not in the DOM must FAIL this gate, not be
+           // quietly skipped: silently dropping it would let the row "fit"
+           // precisely because a button went missing.
+           missing: out.filter(o => o.missing).map(o => o.id),
+           // One row is not enough on its own: the row can stay on one line and
+           // still push the document wider than the panel, which is what an
+           // eighth control did at 280px.
+           overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+           small_targets: vis.filter(b => b.w < 28 || b.h < 28).map(b => b.id),
            row_items: rows.map(r => r.items),
            tops: vis.map(b => b.top),
            row_height: container ? Math.round(container.getBoundingClientRect().height) : null,
@@ -113,6 +124,21 @@ def main():
 
         worst = max(m["rows"] for m in results.values())
         print(f"\nmax rows across {WIDTHS}: {worst}", flush=True)
+        # Any control absent from the DOM is a failure, not a pass with a
+        # shorter row. Without this the gate would report "fits" for a layout
+        # that fits only because a button disappeared.
+        missing = sorted({mid for m in results.values() for mid in m.get("missing", [])})
+        if missing:
+            print(f"MISSING CONTROLS: {missing}", flush=True)
+            return 1
+        overflowed = sorted(w for w, m in results.items() if m.get("overflow"))
+        if overflowed:
+            print(f"HORIZONTAL OVERFLOW at: {overflowed}", flush=True)
+            return 1
+        small = sorted({sid for m in results.values() for sid in m.get("small_targets", [])})
+        if small:
+            print(f"TARGETS BELOW 28px: {small}", flush=True)
+            return 1
         return 0 if worst == 1 else 1
     finally:
         chrome.kill()
