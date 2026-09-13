@@ -79,7 +79,7 @@ export function createTranscriptSearch({ transcript, onNavigate, onOpen }) {
   previous.addEventListener('click', () => move(-1));
   next.addEventListener('click', () => move(1));
   panel.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') { move(event.shiftKey ? -1 : 1); event.preventDefault(); }
+    if (event.key === 'Enter' && event.target === input) { move(event.shiftKey ? -1 : 1); event.preventDefault(); }
     if (event.key === 'Escape') { close(); event.preventDefault(); event.stopPropagation(); }
   });
   document.addEventListener('keydown', (event) => {

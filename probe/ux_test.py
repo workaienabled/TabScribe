@@ -206,6 +206,34 @@ def find(ui):
     ui.chrome.send('Input.dispatchKeyEvent', session_id=ui.sid, type='keyDown', key='f', code='KeyF', modifiers=2)
     ui.chrome.send('Input.dispatchKeyEvent', session_id=ui.sid, type='keyUp', key='f', code='KeyF')
     ui.check('Ctrl+F opens transcript search', ui.js("!document.getElementById('findPanel').hidden && document.activeElement.id === 'findInput'"))
+    ui.js("document.getElementById('findInput').value='roadmap'; document.getElementById('findInput').dispatchEvent(new Event('input'))")
+    # Native key events exercise button activation, unlike synthetic DOM events.
+    for name, target, modifiers, expected in [
+        ('Enter in find input advances', 'findInput', 0, '2 of 9'),
+        ('Shift+Enter in find input goes backward', 'findInput', 8, '1 of 9'),
+        ('Enter on Previous activates the focused button', 'findPrev', 0, '9 of 9'),
+    ]:
+        ui.js(f"document.getElementById('{target}').focus()")
+        for event_type in ['keyDown', 'keyUp']:
+            ui.chrome.send('Input.dispatchKeyEvent', session_id=ui.sid, type=event_type,
+                           key='Enter', code='Enter', windowsVirtualKeyCode=13,
+                           text='\r' if event_type == 'keyDown' else '',
+                           modifiers=modifiers)
+        state = ui.js("({count: document.getElementById('findCount').textContent, focus: document.activeElement.id})")
+        ui.check(name, state == {'count': expected, 'focus': target}, state)
+    ui.js("document.getElementById('findClose').focus()")
+    for event_type in ['keyDown', 'keyUp']:
+        ui.chrome.send('Input.dispatchKeyEvent', session_id=ui.sid, type=event_type,
+                       key='Enter', code='Enter', windowsVirtualKeyCode=13,
+                       text='\r' if event_type == 'keyDown' else '', modifiers=0)
+    state = ui.js("""({
+      hidden: document.getElementById('findPanel').hidden,
+      matches: CSS.highlights.has('search-matches'),
+      current: CSS.highlights.has('search-current'),
+      focus: document.activeElement.id,
+    })""")
+    ui.check('Enter on Close closes find, clears highlights and restores focus',
+             state == {'hidden': True, 'matches': False, 'current': False, 'focus': 'findBtn'}, state)
 
 
 def undo(ui):
