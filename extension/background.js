@@ -24,6 +24,7 @@
 const TARGET_KEY = 'targetTabId';
 const WINDOW_KEY = 'popoutWindowId';
 const HANDOFF_KEY = 'handoffSnapshot';
+const MIC_PAGE_SHOWN_KEY = 'micPageShown';
 
 async function disableAutoOpen() {
   // Must stay false: with true, Chrome opens the panel itself and the click no
@@ -38,6 +39,59 @@ async function disableAutoOpen() {
 chrome.runtime.onInstalled.addListener(disableAutoOpen);
 chrome.runtime.onStartup.addListener(disableAutoOpen);
 disableAutoOpen();
+
+/**
+ * Offer the microphone page once, on first install.
+ *
+ * The microphone is the one capability this extension cannot ask for from its
+ * own UI: a side panel cannot raise Chrome's prompt, and there is no manifest
+ * permission for it in an extension (measured — see mic-permission.js). A normal
+ * page in a tab can, so first install is the natural moment to offer it, before
+ * the user is in a meeting and pressing Start.
+ *
+ * Three guards, because a tab that comes back is worse than no tab at all:
+ *
+ *  - a stored flag, because chrome.runtime.onInstalled fires with reason
+ *    'install' on EVERY load of an unpacked extension, not only the first
+ *    (measured on Chrome 151 in probe/spike_install_event.py), so the reason
+ *    alone would reopen the tab on every developer reload;
+ *  - the live permission state, so a profile that already granted the
+ *    microphone is never interrupted;
+ *  - reason === 'install', so an update or a browser restart never triggers it.
+ *
+ * Nothing here can affect transcription: it runs in the worker, touches no
+ * capture state, and every failure is swallowed.
+ */
+async function offerMicrophonePageOnce(details) {
+  try {
+    if (details?.reason !== 'install') return;
+
+    const stored = await chrome.storage.local.get(MIC_PAGE_SHOWN_KEY);
+    if (stored[MIC_PAGE_SHOWN_KEY]) return;
+
+    // Already allowed (or explicitly blocked): asking again would be noise.
+    let state = 'prompt';
+    try {
+      state = (await navigator.permissions.query({ name: 'microphone' })).state;
+    } catch (e) { /* treat an unreadable state as 'not yet asked' */ }
+    if (state === 'granted' || state === 'denied') {
+      await chrome.storage.local.set({ [MIC_PAGE_SHOWN_KEY]: true });
+      return;
+    }
+
+    // Record before opening: if the tab fails to open, the user is not going to
+    // be asked again and again on every reload.
+    await chrome.storage.local.set({ [MIC_PAGE_SHOWN_KEY]: true });
+    await chrome.tabs.create({
+      url: chrome.runtime.getURL('mic-permission.html'),
+      active: true,
+    });
+  } catch (e) {
+    console.warn('microphone page on install failed:', e);
+  }
+}
+
+chrome.runtime.onInstalled.addListener(offerMicrophonePageOnce);
 
 chrome.action.onClicked.addListener((tab) => {
   if (!tab || tab.id === undefined) return;

@@ -63,9 +63,14 @@ the saved file** transcribes your microphone in parallel and merges it into the
 file written by **Download**, labelled `You:` against `Meeting:`.
 
 - It is **on by default**, and needs a one-time permission. A side panel cannot
-  show Chrome's microphone prompt at all, so TabScribe opens a normal tab
-  (**Allow microphone…** under the gear) that can. Allow it once and the panel
-  uses the microphone from then on, in every meeting, with no further prompts.
+  show Chrome's microphone prompt at all, so TabScribe uses a normal tab, which
+  can. **That tab opens by itself the first time the extension is installed** —
+  allow it once and the panel uses the microphone from then on, in every meeting,
+  with no further prompts.
+- The tab opens **once**, on first install only. It does not come back when Chrome
+  restarts, when the extension updates or is reloaded, or if the microphone was
+  already allowed or blocked. If you dismissed it, **Allow microphone…** under the
+  gear opens it again on demand.
 - Until that grant exists, TabScribe simply does not use the microphone. It never
   asks in the panel, because a request there is refused without ever showing you
   a prompt — which would look like a refusal you never made.

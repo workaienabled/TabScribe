@@ -127,6 +127,22 @@ for the origin and every later session just works. `MicTranscriber
 microphone only when it is already `granted` — so the panel can never again
 report a refusal the user was not asked for.
 
+That page is also opened automatically on first install, from
+`offerMicrophonePageOnce()` in the service worker, so the permission is settled
+before the user is in a meeting. It is guarded three ways, because a tab that
+keeps coming back is worse than no tab at all:
+
+- a stored `micPageShown` flag — `chrome.runtime.onInstalled` fires with reason
+  `'install'` on **every** load of an unpacked extension, not only the first
+  (measured in `probe/spike_install_event.py`), so the reason alone would reopen
+  the tab on every developer reload;
+- the live permission state, so a profile that has already granted **or blocked**
+  the microphone is never interrupted;
+- `reason === 'install'`, so updates and browser restarts never trigger it.
+
+The flag is written *before* the tab is opened, so a failure to open cannot turn
+into a tab that retries forever.
+
 The fix is structural. `start({gesture})` takes the caller's word for whether a
 live user activation exists, and the microphone is requested **synchronously**
 as the first statement, before any `await`:
