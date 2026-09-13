@@ -15,7 +15,7 @@ import time
 from pipe_chrome import PipeChrome
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / 'artifacts' / 'chatgpt'
+OUT = ROOT / 'artifacts' / 'uiux'
 OUT.mkdir(parents=True, exist_ok=True)
 
 
@@ -90,15 +90,19 @@ def shell(ui):
     info = ui.js("""(() => ({
       liveStatus: document.querySelector('#status').getAttribute('role'),
       readable: parseFloat(getComputedStyle(document.querySelector('#transcript')).fontSize),
-      groups: document.querySelectorAll('#prefsPanel fieldset').length,
-      mode: document.querySelector('#modeSummary')?.textContent,
+      brand: !!document.querySelector('.brand-mark'),
+      modeHidden: document.getElementById('modeSummary')?.hidden,
+      prefsPos: getComputedStyle(document.getElementById('prefsPanel')).position,
+      chrome: (() => { const t=document.getElementById('transcript').getBoundingClientRect(); return t.height/innerHeight; })(),
       focusable: document.querySelector('#transcript').tabIndex,
       controls: ['copyBtn','downloadBtn','clearBtn'].map(id => document.getElementById(id).disabled),
     }))()""")
     ui.check('recognition status is announced accessibly', info['liveStatus'] == 'status', info)
-    ui.check('transcript uses at least 16px type by default', info['readable'] >= 16)
-    ui.check('preferences are grouped by purpose', info['groups'] >= 3)
-    ui.check('recognition mode visible with settings closed', bool(info.get('mode')))
+    ui.check('transcript uses compact 13px type by default', info['readable'] == 13, info)
+    ui.check('transcript dominates a typical side panel', info['chrome'] >= 0.62, info)
+    ui.check('no decorative brand mark', not info['brand'])
+    ui.check('on-device mode does not add a badge', info.get('modeHidden') is True, info)
+    ui.check('preferences sit in the document flow', info['prefsPos'] != 'absolute', info)
     ui.check('transcript can receive keyboard focus', info['focusable'] == 0)
     ui.check('empty transcript actions are disabled', all(info['controls']))
     for w in [280, 300, 320, 340, 360, 430, 640]:
@@ -106,7 +110,7 @@ def shell(ui):
         fit = ui.js("""(() => {
           const rs = ['startBtn','stopBtn','popoutBtn','prefsBtn'].map(id => document.getElementById(id).getBoundingClientRect());
           return {oneRow: Math.max(...rs.map(r=>r.top)) < Math.min(...rs.map(r=>r.bottom)),
-            targets: rs.every(r=>r.height>=32 && r.width>=28),
+            targets: rs.every(r=>r.height>=24 && r.width>=28),
             overflow: document.documentElement.scrollWidth > innerWidth};
         })()""")
         ui.check(f'top row fits at {w}px with usable targets', fit['oneRow'] and fit['targets'] and not fit['overflow'], fit)
@@ -114,13 +118,11 @@ def shell(ui):
     ui.js("document.getElementById('prefsBtn').click()")
     info = ui.js("""(() => {
       const p = document.getElementById('prefsPanel'), r = p.getBoundingClientRect();
-      return {inside: r.top >= 0 && r.bottom <= innerHeight, scroll: ['auto','scroll'].includes(getComputedStyle(p).overflowY),
-        close: !!document.querySelector('#prefsCloseBtn')};
+      return {inside: r.top >= 0 && r.bottom <= innerHeight, scroll: ['auto','scroll'].includes(getComputedStyle(p).overflowY)};
     })()""")
-    ui.check('settings stay reachable in short windows', info['inside'] and info['scroll'] and info['close'], info)
-    if info['close']:
-        ui.js("document.getElementById('prefsCloseBtn').click()")
-        ui.check('closing preferences restores focus to gear', ui.js("document.getElementById('prefsPanel').hidden && document.activeElement.id === 'prefsBtn'"))
+    ui.check('settings stay reachable in short windows', info['inside'] and info['scroll'], info)
+    ui.js("document.getElementById('prefsBtn').click()")
+    ui.check('gear closes preferences', ui.js("document.getElementById('prefsPanel').hidden"))
     ui.fixture(4)
     ui.js("document.querySelector('#transcript .seg').classList.add('interim')")
     ui.check('interim text is readable without italics', ui.js("getComputedStyle(document.querySelector('.seg.interim')).fontStyle === 'normal'"))
@@ -133,12 +135,12 @@ def reading(ui):
     if not exists:
         return
     defaults = ui.js("({theme: document.getElementById('themeSel').value, size: document.getElementById('fontSizeSel').value})")
-    ui.check('system theme and 16px are defaults', defaults == {'theme':'system', 'size':'16'}, defaults)
+    ui.check('system theme and 13px are defaults', defaults == {'theme':'system', 'size':'13'}, defaults)
     ui.js("""(() => {
       const t = document.getElementById('themeSel'); t.value = 'dark'; t.dispatchEvent(new Event('change'));
-      const s = document.getElementById('fontSizeSel'); s.value = '20'; s.dispatchEvent(new Event('change'));
+      const s = document.getElementById('fontSizeSel'); s.value = '17'; s.dispatchEvent(new Event('change'));
     })()""")
-    ui.check('reading size applies immediately', ui.js("getComputedStyle(document.getElementById('transcript')).fontSize === '20px'"))
+    ui.check('reading size applies immediately', ui.js("getComputedStyle(document.getElementById('transcript')).fontSize === '17px'"))
     dark = ui.js("getComputedStyle(document.body).backgroundColor")
     ui.js("document.getElementById('themeSel').value='light'; document.getElementById('themeSel').dispatchEvent(new Event('change'))")
     light = ui.js("getComputedStyle(document.body).backgroundColor")
@@ -149,12 +151,12 @@ def reading(ui):
     ui.chrome.launch()
     ui.chrome.send('Extensions.loadUnpacked', path=str(ROOT / 'extension'))
     ui.tid, ui.sid = ui.chrome.new_tab(f'chrome-extension://{ui.ext_id}/sidepanel.html')
-    ui.chrome.wait_for_js(ui.sid, "document.getElementById('fontSizeSel').value === '20'")
-    ui.check('theme and text size survive Chrome restart', ui.js("document.getElementById('themeSel').value === 'light' && getComputedStyle(document.getElementById('transcript')).fontSize === '20px'"))
+    ui.chrome.wait_for_js(ui.sid, "document.getElementById('fontSizeSel').value === '17'")
+    ui.check('theme and text size survive Chrome restart', ui.js("document.getElementById('themeSel').value === 'light' && getComputedStyle(document.getElementById('transcript')).fontSize === '17px'"))
     ui.js("chrome.storage.local.set({prefs:{theme:'invalid', fontSize:9000}})")
     ui.chrome.send('Page.reload', session_id=ui.sid)
     ui.chrome.wait_for_js(ui.sid, "document.getElementById('status').textContent.length > 0")
-    ui.check('invalid stored choices fall back safely', ui.js("document.getElementById('themeSel').value === 'system' && getComputedStyle(document.getElementById('transcript')).fontSize === '16px'"))
+    ui.check('invalid stored choices fall back safely', ui.js("document.getElementById('themeSel').value === 'system' && getComputedStyle(document.getElementById('transcript')).fontSize === '13px'"))
 
 
 def navigation(ui):

@@ -11,7 +11,7 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / 'artifacts' / 'chatgpt'
+OUT = ROOT / 'artifacts' / 'uiux'
 OUT.mkdir(parents=True, exist_ok=True)
 CASES = [(f'ux-{stage}', ['ux_test.py', stage], {}) for stage in ['shell','reading','navigation','undo']]
 CASES += [

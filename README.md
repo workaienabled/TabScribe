@@ -25,8 +25,8 @@ reopen its panel. Save any transcript before reloading.
   Starting again appends a new session instead of overwriting the previous one.
 - **Open in window:** moves the transcript into a pop-out and closes the sidebar.
   If recognition was running, it resumes there. Window size is remembered.
-- **Gear:** opens grouped preferences. Escape or the close button dismisses them.
-  The compact toolbar stays on one row; at narrow widths the pop-out is icon-only.
+- **Gear:** opens compact preferences in place. Escape or the gear dismisses them.
+  The toolbar stays on one row; at narrow widths the pop-out is icon-only.
 - **Auto-scroll:** follows new text only while you are at the bottom. Scroll up to
   read history; **Back to live** returns you without covering transcript text or
   changing your auto-scroll preference.
@@ -45,10 +45,11 @@ reopen its panel. Save any transcript before reloading.
   until used, dismissed, replaced by another Clear, or the view is closed.
 
 Preferences include spoken language, on-device mode, timestamps, auto-scroll,
-select-to-copy, copy toast, System/Light/Dark appearance, and 14–20px transcript
-text. They and the pop-out size are stored on this device, not synced to other
-machines. Language and recognition mode apply to the next Start. The mode badge
-indicates the current session's mode while recognition is running.
+select-to-copy, copy toast, System/Light/Dark appearance, and transcript text
+size (13px default, matching the original compact panel; 15 and 17 optional).
+They and the pop-out size are stored on this device, not synced to other
+machines. Language and recognition mode apply to the next Start. A Cloud badge
+appears only when recognition is not on-device.
 
 ## Privacy and first-run download
 
@@ -65,7 +66,7 @@ Use Download before closing the view. Preferences persist; transcript history do
 
 ## Development and verification
 
-`main` preserves the pre-redesign source; `chatgpt` contains the focused UI.
+`main` preserves the pre-redesign source; `uiux` is the focused compact UI.
 These are local branches. This task did not publish a repository or update the rd
 fleet. Fleet tooling is documented separately in [`deploy/README.md`](deploy/README.md).
 
@@ -78,14 +79,14 @@ DISPLAY=:191 python3 probe/run_regressions.py
 
 Start your own Xvfb on that display first; the runner deliberately refuses common
 user-display numbers. It runs tests serially because audio fixtures share port 8899.
-Full logs and exact exit codes go to `artifacts/chatgpt/`. The known audio scripts
+Full logs and exact exit codes go to `artifacts/uiux/`. The known audio scripts
 are scored by word error rate, not by visual inspection. UI fixture tests are
 separate from real speech-recognition tests. `probe/focus_test.py` tests the core
 meeting-to-copy-to-download flow against real clipboard and file contents.
 
-After committing verified source, `python3 make-chatgpt-package.py` builds the
-separately named extension/source ZIPs under `artifacts/chatgpt/`, byte-checks every
+After committing verified source, `python3 make-uiux-package.py` builds the
+separately named extension/source ZIPs under `artifacts/uiux/`, byte-checks every
 entry, and records SHA-256 hashes. It leaves the earlier download ZIPs intact.
 
 See [`probe/README.md`](probe/README.md) for the older probes and invocation
-constraints, and [`docs/chatgpt-ui.md`](docs/chatgpt-ui.md) for this branch's changes.
+constraints, and [`docs/uiux.md`](docs/uiux.md) for this branch's changes.

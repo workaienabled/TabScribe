@@ -8,17 +8,15 @@
 </head>
 <body>
   <header class="bar">
-    <div class="brand-row">
-      <div class="title">
-        <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4m4-8v12m4-15v18m4-15v12m4-8v4"/></svg>
-        <strong>TabScribe</strong>
-      </div>
-      <span class="mode-summary" id="modeSummary" title="Recognition runs on your device">On-device</span>
+    <div class="title">
+      <span class="dot" id="dot" data-state="idle" aria-hidden="true"></span>
+      <strong>TabScribe</strong>
+      <span class="mode-summary" id="modeSummary" hidden>Cloud</span>
     </div>
     <div class="target" id="target" title="Tab being captured">Choose your meeting tab to begin</div>
   </header>
 
-  <div class="controls main-controls" role="group" aria-label="Transcription controls">
+  <div class="controls" role="group" aria-label="Transcription controls">
     <button id="startBtn" class="primary" title="Start transcribing this tab">Start</button>
     <button id="stopBtn" class="ghost" disabled title="Stop recognition and keep the transcript">Stop</button>
     <button id="popoutBtn" class="popout" aria-label="Open in window" title="Move TabScribe into its own window">
@@ -27,18 +25,16 @@
     </button>
     <button id="prefsBtn" class="ghost prefs-toggle" aria-expanded="false"
             aria-controls="prefsPanel" aria-label="Preferences" title="Preferences">
-      <svg class="gear" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round">
-        <path d="m9 3-.5 2.2-1.6.9-2.1-.6-2 3.4L4.4 10v2L2.8 14l2 3.4 2.1-.6 1.6.9L9 20h4l.5-2.3 1.6-.9 2.1.6 2-3.4-1.6-2v-2l1.6-1.1-2-3.4-2.1.6-1.6-.9L13 3Z" transform="translate(1 0.5)"/>
-        <circle cx="12" cy="12" r="3"/>
+      <svg class="gear" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="currentColor">
+        <path d="M8 5.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6zm0 4.4a1.6 1.6 0 1 1 0-3.2 1.6 1.6 0 0 1 0 3.2z"/>
+        <path d="M14 8c0-.35-.03-.69-.09-1.02l1.36-1.02-1.4-2.42-1.6.62a5.9 5.9 0 0 0-1.77-1.02L10.2 1.2H7.4l-.3 1.94a5.9 5.9 0 0 0-1.77 1.02l-1.6-.62-1.4 2.42L3.69 7A6.1 6.1 0 0 0 3.6 8c0 .35.03.69.09 1.02L2.33 10.04l1.4 2.42 1.6-.62c.53.43 1.13.78 1.77 1.02l.3 1.94h2.8l.3-1.94a5.9 5.9 0 0 0 1.77-1.02l1.6.62 1.4-2.42-1.36-1.02c.06-.33.09-.67.09-1.02zm-1.5 0c0 .3-.03.6-.08.88l-.1.55.99.74-.4.7-1.17-.46-.42.37c-.44.38-.95.68-1.5.89l-.52.2-.22 1.43h-.8l-.22-1.43-.52-.2a4.6 4.6 0 0 1-1.5-.89l-.42-.37-1.17.46-.4-.7.99-.74-.1-.55A4.9 4.9 0 0 1 5.1 8c0-.3.03-.6.08-.88l.1-.55-.99-.74.4-.7 1.17.46.42-.37c.44-.38.95-.68 1.5-.89l.52-.2.22-1.43h.8l.22 1.43.52.2c.55.21 1.06.51 1.5.89l.42.37 1.17-.46.4.7-.99.74.1.55c.05.28.08.58.08.88z"/>
       </svg>
     </button>
   </div>
 
-  <section id="prefsPanel" class="prefs-panel" hidden aria-label="Preferences">
-    <div class="section-heading"><h2>Preferences</h2><button id="prefsCloseBtn" class="icon-button" aria-label="Close preferences" title="Close preferences">×</button></div>
-    <fieldset>
-      <legend>Recognition</legend>
-      <label class="field-label" for="langSel">Spoken language</label>
+  <div id="prefsPanel" class="prefs-panel" hidden aria-label="Preferences">
+    <div class="prefs-row">
+      <label class="field-label" for="langSel">Language</label>
       <select id="langSel" title="Recognition language">
         <option value="en-US">English (US)</option><option value="en-GB">English (UK)</option>
         <option value="es-ES">Spanish (Spain)</option><option value="fr-FR">French</option>
@@ -46,47 +42,44 @@
         <option value="pt-BR">Portuguese (Brazil)</option><option value="ja-JP">Japanese</option>
         <option value="hi-IN">Hindi</option>
       </select>
-      <label class="check"><input type="checkbox" id="localOnly" checked><span>On-device only<small>Keep recognition local. Turning this off sends audio to Google's speech service.</small></span></label>
-      <p class="field-hint" id="recognitionHint">Language and recognition mode apply to the next Start.</p>
-    </fieldset>
-    <fieldset id="readingPrefs">
-      <legend>Reading</legend>
-      <div class="reading-options">
-        <label class="field-label">Appearance<select id="themeSel"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
-        <label class="field-label">Text size<select id="fontSizeSel"><option value="14">Small · 14</option><option value="16" selected>Default · 16</option><option value="18">Large · 18</option><option value="20">Largest · 20</option></select></label>
-      </div>
-      <label class="check"><input type="checkbox" id="tsToggle"><span>Timestamps<small>Show when each segment was heard.</small></span></label>
-      <label class="check"><input type="checkbox" id="autoscroll" checked><span>Auto-scroll<small>Follow new text while you're at the bottom.</small></span></label>
-    </fieldset>
-    <fieldset>
-      <legend>Copying</legend>
-      <label class="check"><input type="checkbox" id="selectToCopy" checked><span>Select to copy<small>Copy text when you finish selecting it.</small></span></label>
-      <label class="check"><input type="checkbox" id="copyToast" checked><span>Copy toast<small>Briefly show “Copied”. No flash.</small></span></label>
-    </fieldset>
-    <p class="prefs-footnote">Preferences are saved on this device.</p>
-    <div class="prefs-maintenance"><button id="clearBtn" class="danger" title="Clear this transcript (can be undone)" disabled>Clear transcript</button></div>
-  </section>
-
-  <div class="session-status">
-    <span class="state-badge"><span class="dot" id="dot" data-state="idle" aria-hidden="true"></span><span id="stateLabel">Ready</span></span>
-    <div id="status" class="status" role="status" aria-live="polite" aria-atomic="true"></div>
+    </div>
+    <div class="prefs-row reading-options">
+      <label class="field-label">Appearance
+        <select id="themeSel"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
+      </label>
+      <label class="field-label">Text size
+        <select id="fontSizeSel">
+          <option value="13" selected>Default</option>
+          <option value="15">Medium</option>
+          <option value="17">Large</option>
+        </select>
+      </label>
+    </div>
+    <div class="checks">
+      <label class="check"><input type="checkbox" id="localOnly" checked> On-device only</label>
+      <label class="check"><input type="checkbox" id="tsToggle"> Timestamps</label>
+      <label class="check"><input type="checkbox" id="autoscroll" checked> Auto-scroll</label>
+      <label class="check"><input type="checkbox" id="selectToCopy" checked> Select to copy</label>
+      <label class="check"><input type="checkbox" id="copyToast" checked> Copy toast</label>
+    </div>
+    <p class="field-hint" id="recognitionHint">Language and on-device/cloud apply at the next Start.</p>
+    <button id="clearBtn" class="danger" title="Clear this transcript (can be undone)" disabled>Clear transcript</button>
   </div>
+
+  <div id="status" class="status" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <section id="modelPanel" class="model-panel" hidden aria-live="polite">
     <div class="model-head"><span class="model-icon" id="modelIcon" aria-hidden="true">↓</span><strong id="modelTitle">One-time model download</strong></div>
     <p class="model-body" id="modelBody">On-device recognition needs Chrome's speech model, roughly 300 MB per language.</p>
     <div class="model-bar" id="modelBar" role="progressbar" aria-label="Downloading speech model"><div class="model-bar-fill"></div></div>
     <p class="model-meta"><span id="modelState">Waiting to start</span><span id="modelElapsed" class="model-elapsed"></span></p>
-    <p class="model-hint" id="modelHint">Chrome does not report download progress. This shows elapsed time, not a percentage. A slow connection can take several minutes.</p>
+    <p class="model-hint" id="modelHint">Chrome does not report download progress. This shows elapsed time, not a percentage.</p>
     <div class="model-actions" id="modelActions"><button id="useCloudBtn" class="ghost">Use cloud instead</button><button id="retryModelBtn" class="ghost" hidden>Retry download</button></div>
   </section>
 
   <main id="transcript" class="transcript" tabindex="0" aria-label="Transcript" aria-live="off">
     <div class="empty" id="emptyHint">
-      <h1>Live meeting transcript</h1>
-      <p>Press <strong>Start</strong> to transcribe your meeting tab. The audio stays audible.</p>
-      <p>Select a passage and copy it into your AI chat.</p>
-      <p class="empty-detail">Download the full transcript before closing this view. Text is not saved automatically.</p>
+      Click <strong>Start</strong> to transcribe this meeting. Select a passage and copy it into your AI chat. Download the full transcript before closing.
     </div>
   </main>
 
@@ -94,7 +87,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite" hidden>Copied</div>
   <div id="undoBar" class="undo-bar" hidden><span role="status">Transcript cleared</span><button id="undoClearBtn">Undo</button><button id="undoDismiss" aria-label="Dismiss undo" title="Discard recovery copy">×</button></div>
   <footer class="footer">
-    <span id="wordCount" class="sr-only">0 words</span>
+    <div class="stats"><span id="wordCount">0 words</span></div>
     <div class="actions">
       <button id="copyBtn" aria-describedby="wordCount" title="Copy the whole transcript, or only the passage you select" disabled>Copy all</button>
       <button id="downloadBtn" title="Download the full transcript as a text file, even with text selected" disabled>Download</button>

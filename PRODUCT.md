@@ -15,8 +15,9 @@
 
 ## Design decisions derived from that goal
 
-- Keep the live transcript dominant. Visible controls must support capture,
-  selection/copy, or full-transcript download—not a general document-reading app.
+- Keep the live transcript dominant and compact. Default type is 13px, matching
+  the original panel. Visible controls must support capture, selection/copy, or
+  full-transcript download—not a general document-reading app.
 - Do not include Find, transcript search, a transcript library, or document-management
   controls. Their absence is intentional, not a missing roadmap feature.
 - Do not add an embedded AI client, provider picker, API-key setup, automatic upload,

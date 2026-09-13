@@ -36,11 +36,9 @@ const el = {
   selectToCopy: document.getElementById('selectToCopy'),
   copyToast: document.getElementById('copyToast'),
   prefsBtn: document.getElementById('prefsBtn'),
-  prefsClose: document.getElementById('prefsCloseBtn'),
   theme: document.getElementById('themeSel'),
   fontSize: document.getElementById('fontSizeSel'),
   modeSummary: document.getElementById('modeSummary'),
-  stateLabel: document.getElementById('stateLabel'),
   prefsPanel: document.getElementById('prefsPanel'),
   toast: document.getElementById('toast'),
   transcript: document.getElementById('transcript'),
@@ -158,7 +156,6 @@ function setStatus(text, isError = false) {
 
 function setState(state) {
   el.dot.dataset.state = state;
-  el.stateLabel.textContent = ({idle: 'Ready', listening: 'Live', starting: 'Starting', restarting: 'Reconnecting', stopped: 'Stopped', error: 'Attention'})[state] || state;
   updateModeSummary();
 }
 
@@ -168,6 +165,7 @@ function updateModeSummary() {
   const lang = active ? transcriber.options.lang : el.lang.value;
   el.modeSummary.textContent = local ? 'On-device' : 'Cloud';
   el.modeSummary.classList.toggle('cloud', !local);
+  el.modeSummary.hidden = local;
   el.modeSummary.title = `${langName(lang)} · ${local ? 'Recognition stays on this device' : 'Audio is sent to Google for recognition'}${active ? ' · Current session' : ' · Next session'}`;
 }
 
@@ -530,7 +528,7 @@ async function retryModel() {
 
 function applyReadingPrefs(p) {
   el.theme.value = ['system', 'light', 'dark'].includes(p.theme) ? p.theme : 'system';
-  el.fontSize.value = String([14, 16, 18, 20].includes(p.fontSize) ? p.fontSize : 16);
+  el.fontSize.value = String([13, 15, 17].includes(p.fontSize) ? p.fontSize : 13);
   document.documentElement.dataset.theme = el.theme.value;
   document.documentElement.style.setProperty('--reading-size', `${el.fontSize.value}px`);
 }
@@ -954,10 +952,6 @@ for (const control of [el.theme, el.fontSize]) {
     prefs.set(values);
   });
 }
-el.prefsClose.addEventListener('click', () => {
-  setPrefsOpen(false);
-  el.prefsBtn.focus();
-});
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !el.prefsPanel.hidden) {
     setPrefsOpen(false);

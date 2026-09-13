@@ -31,7 +31,7 @@ def focus(ui):
     ui.check('footer contains only copy and download', ui.js("JSON.stringify(Array.from(document.querySelectorAll('.footer button')).map(e=>e.id)) === JSON.stringify(['copyBtn','downloadBtn'])"))
     ui.check('Clear is an occasional action inside Preferences', ui.js("document.getElementById('prefsPanel').contains(document.getElementById('clearBtn'))"))
     ui.check('download is named explicitly', ui.js("document.getElementById('downloadBtn').textContent.trim() === 'Download'"))
-    ui.check('word count is accessible context, not visible clutter', ui.js("document.getElementById('copyBtn').getAttribute('aria-describedby') === 'wordCount' && document.getElementById('wordCount').getBoundingClientRect().height <= 1"))
+    ui.check('word count is visible and compact', ui.js("(() => { const r=document.getElementById('wordCount').getBoundingClientRect(); return r.height>=10 && r.height<=18; })()"))
     ui.fixture(3)
     ui.capture_store()
     # The fixture restores a stopped store. Enable the control only to exercise
@@ -101,7 +101,8 @@ def focus(ui):
     for width in [280,320,360,640]:
         ui.size(width,620)
         ui.check(f'copy/download footer fits at {width}px', ui.js("(() => {const buttons=[...document.querySelectorAll('.footer button')].map(e=>e.getBoundingClientRect());return buttons.every(r=>r.x>=0 && r.right<=innerWidth) && document.documentElement.scrollWidth<=innerWidth && Math.max(...buttons.map(r=>r.top))<Math.min(...buttons.map(r=>r.bottom));})()"))
-    ui.fixture(30)
+    ui.fixture(80)
+    ui.size(360, 420)
     ui.js("document.getElementById('transcript').scrollTop=0")
     time.sleep(.2)
     ui.check('Back to live is contextual and never overlaps transcript text', ui.js("(() => {const b=document.getElementById('jumpLatestBtn'),r=b.getBoundingClientRect(),t=document.getElementById('transcript').getBoundingClientRect();return !b.hidden && b.textContent.includes('Back to live') && r.top>=t.bottom;})()"))
