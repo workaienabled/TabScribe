@@ -13,8 +13,9 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'artifacts' / 'chatgpt'
 OUT.mkdir(parents=True, exist_ok=True)
-CASES = [(f'ux-{stage}', ['ux_test.py', stage], {}) for stage in ['shell','reading','navigation','find','undo']]
+CASES = [(f'ux-{stage}', ['ux_test.py', stage], {}) for stage in ['shell','reading','navigation','undo']]
 CASES += [
+    ('ux-focus', ['focus_test.py'], {}),
     ('prefs', ['prefs_test.py'], {}),
     ('popout', ['popout_test.py'], {}),
     ('e2e-sample1', ['e2e_full.py'], {}),

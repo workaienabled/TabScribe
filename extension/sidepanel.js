@@ -18,7 +18,6 @@
  */
 import { Transcriber, buildAudioGraph, formatClock } from './transcriber.js';
 import * as prefs from './prefs.js';
-import { createTranscriptSearch } from './transcript-search.js';
 
 const el = {
   start: document.getElementById('startBtn'),
@@ -200,11 +199,6 @@ const nodes = new Map();
 let lastStore = null;
 let heldUpdates = false;
 let following = true;
-const transcriptSearch = createTranscriptSearch({
-  transcript: el.transcript,
-  onNavigate: () => { following = false; },
-  onOpen: () => { setPrefsOpen(false); following = false; },
-});
 
 function nearLatest() {
   return el.transcript.scrollHeight - el.transcript.scrollTop - el.transcript.clientHeight < 48;
@@ -300,17 +294,18 @@ function render(store) {
   el.transcript.classList.toggle('holding', !!sel);
 
   // Autoscrolling while the user is dragging moves the text under the cursor.
-  if (el.autoscroll.checked && following && !sel && !transcriptSearch.isOpen()) {
+  if (el.autoscroll.checked && following && !sel) {
     el.transcript.scrollTop = el.transcript.scrollHeight;
   }
   refreshJumpButton();
-  transcriptSearch.refresh();
 }
 
 function refreshSelectionUi() {
   const sel = transcriptSelection();
   const selecting = !!sel;
-  el.copy.textContent = selecting ? 'Copy selection' : 'Copy';
+  el.copy.textContent = selecting ? 'Copy selection' : 'Copy all';
+  if (selecting) el.copy.removeAttribute('aria-describedby');
+  else el.copy.setAttribute('aria-describedby', 'wordCount');
   el.transcript.classList.toggle('holding', selecting);
 
   // Selection gone: apply whatever was held back while it existed.
@@ -795,7 +790,7 @@ async function stop() {
   }
   // The capture stays armed so Start works again without another toolbar click.
   setState('idle');
-  setStatus('Stopped. Transcript kept — use Copy or Save.');
+  setStatus('Stopped. Transcript kept — use Copy or Download.');
   el.start.disabled = false;
 }
 
@@ -848,16 +843,6 @@ async function writeClipboard(text) {
   }
 }
 
-function flash(button, label) {
-  const original = button.dataset.label || button.textContent;
-  button.dataset.label = original;
-  button.textContent = label;
-  setTimeout(() => {
-    button.textContent = transcriptSelection() ? 'Copy selection' : 'Copy';
-    delete button.dataset.label;
-  }, 1200);
-}
-
 async function copy() {
   // A selection means "copy this part" — that is the whole point of being able to
   // select. With nothing selected, fall back to the entire transcript.
@@ -874,11 +859,7 @@ async function copy() {
     return;
   }
 
-  const words = text.split(/\s+/).filter(Boolean).length;
-  flash(el.copy, 'Copied');
-  setStatus(selected
-    ? `Copied selection (${words} words).`
-    : `Copied whole transcript (${words} words).`);
+  showToast('Copied');
 }
 
 function download() {
@@ -913,6 +894,9 @@ function undoClear() {
 }
 
 function clear() {
+  // The occasional action lives in Preferences; reveal its result and Undo.
+  setPrefsOpen(false);
+  el.transcript.focus({preventScroll: true});
   if (transcriber && !transcriber.store.isEmpty()) {
     clearedSnapshot = transcriber.store.serialize();
     el.undoBar.hidden = false;
@@ -939,8 +923,7 @@ function clear() {
   const sel = window.getSelection();
   if (sel && el.transcript.contains(sel.anchorNode)) sel.removeAllRanges();
   el.transcript.classList.remove('holding');
-  el.copy.textContent = 'Copy';
-  transcriptSearch.refresh();
+  refreshSelectionUi();
 
   setStatus(transcriber?.running
     ? 'Cleared. Still listening.'

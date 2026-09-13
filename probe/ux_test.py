@@ -180,62 +180,6 @@ def navigation(ui):
     ui.check('jump does not silently enable auto-scroll', ui.js("!document.getElementById('autoscroll').checked"))
 
 
-def find(ui):
-    ui.fixture(8)
-    ui.capture_store()
-    exists = ui.js("!!document.getElementById('findBtn')")
-    ui.check('find control exists', exists)
-    if not exists:
-        return
-    ui.js("window.originalTextNode = document.querySelector('.seg .txt').firstChild; window.originalText = fixtureStore.toText(); document.getElementById('findBtn').click()")
-    ui.check('find opens with input focused', ui.js("!document.getElementById('findPanel').hidden && document.activeElement.id === 'findInput'"))
-    ui.js("document.getElementById('findInput').value='ROADMAP'; document.getElementById('findInput').dispatchEvent(new Event('input'))")
-    ui.check('case-insensitive search reports exact count', ui.js("document.getElementById('findCount').textContent === '1 of 8'"))
-    ui.check('matches are highlighted without rewriting transcript nodes', ui.js("CSS.highlights.get('search-matches').size === 8 && document.querySelector('.seg .txt').firstChild === originalTextNode"))
-    ui.js("document.getElementById('findNext').click()")
-    ui.check('next match advances', ui.js("document.getElementById('findCount').textContent === '2 of 8'"))
-    ui.js("document.getElementById('findPrev').click(); document.getElementById('findPrev').click()")
-    ui.check('previous match wraps', ui.js("document.getElementById('findCount').textContent === '8 of 8'"))
-    ui.js("fixtureStore.update(8, 'Another roadmap decision.', true, 60000); document.getElementById('tsToggle').dispatchEvent(new Event('change'))")
-    ui.check('incoming transcript refreshes matches', ui.js("CSS.highlights.get('search-matches').size === 9"))
-    ui.js("document.getElementById('findInput').value='[not a regex]'; document.getElementById('findInput').dispatchEvent(new Event('input'))")
-    ui.check('literal search has a clear no-results state', ui.js("document.getElementById('findCount').textContent === 'No matches' && document.getElementById('findNext').disabled"))
-    ui.js("document.getElementById('findClose').click()")
-    ui.check('close removes highlights and restores focus', ui.js("document.getElementById('findPanel').hidden && !CSS.highlights.has('search-matches') && document.activeElement.id === 'findBtn'"))
-    ui.check('search never changed the original transcript content', ui.js("fixtureStore.toText().startsWith(originalText)"))
-    ui.chrome.send('Input.dispatchKeyEvent', session_id=ui.sid, type='keyDown', key='f', code='KeyF', modifiers=2)
-    ui.chrome.send('Input.dispatchKeyEvent', session_id=ui.sid, type='keyUp', key='f', code='KeyF')
-    ui.check('Ctrl+F opens transcript search', ui.js("!document.getElementById('findPanel').hidden && document.activeElement.id === 'findInput'"))
-    ui.js("document.getElementById('findInput').value='roadmap'; document.getElementById('findInput').dispatchEvent(new Event('input'))")
-    # Native key events exercise button activation, unlike synthetic DOM events.
-    for name, target, modifiers, expected in [
-        ('Enter in find input advances', 'findInput', 0, '2 of 9'),
-        ('Shift+Enter in find input goes backward', 'findInput', 8, '1 of 9'),
-        ('Enter on Previous activates the focused button', 'findPrev', 0, '9 of 9'),
-    ]:
-        ui.js(f"document.getElementById('{target}').focus()")
-        for event_type in ['keyDown', 'keyUp']:
-            ui.chrome.send('Input.dispatchKeyEvent', session_id=ui.sid, type=event_type,
-                           key='Enter', code='Enter', windowsVirtualKeyCode=13,
-                           text='\r' if event_type == 'keyDown' else '',
-                           modifiers=modifiers)
-        state = ui.js("({count: document.getElementById('findCount').textContent, focus: document.activeElement.id})")
-        ui.check(name, state == {'count': expected, 'focus': target}, state)
-    ui.js("document.getElementById('findClose').focus()")
-    for event_type in ['keyDown', 'keyUp']:
-        ui.chrome.send('Input.dispatchKeyEvent', session_id=ui.sid, type=event_type,
-                       key='Enter', code='Enter', windowsVirtualKeyCode=13,
-                       text='\r' if event_type == 'keyDown' else '', modifiers=0)
-    state = ui.js("""({
-      hidden: document.getElementById('findPanel').hidden,
-      matches: CSS.highlights.has('search-matches'),
-      current: CSS.highlights.has('search-current'),
-      focus: document.activeElement.id,
-    })""")
-    ui.check('Enter on Close closes find, clears highlights and restores focus',
-             state == {'hidden': True, 'matches': False, 'current': False, 'focus': 'findBtn'}, state)
-
-
 def undo(ui):
     ui.fixture(3)
     ui.capture_store()
@@ -258,7 +202,7 @@ def undo(ui):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('stage', choices=['shell', 'reading', 'navigation', 'find', 'undo'])
+    parser.add_argument('stage', choices=['shell', 'reading', 'navigation', 'undo'])
     args = parser.parse_args()
     ui = UI()
     try:

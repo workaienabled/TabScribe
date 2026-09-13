@@ -15,7 +15,7 @@
       </div>
       <span class="mode-summary" id="modeSummary" title="Recognition runs on your device">On-device</span>
     </div>
-    <div class="target" id="target" title="Tab being captured">Choose an audio tab to begin</div>
+    <div class="target" id="target" title="Tab being captured">Choose your meeting tab to begin</div>
   </header>
 
   <div class="controls main-controls" role="group" aria-label="Transcription controls">
@@ -64,6 +64,7 @@
       <label class="check"><input type="checkbox" id="copyToast" checked><span>Copy toast<small>Briefly show “Copied”. No flash.</small></span></label>
     </fieldset>
     <p class="prefs-footnote">Preferences are saved on this device.</p>
+    <div class="prefs-maintenance"><button id="clearBtn" class="danger" title="Clear this transcript (can be undone)" disabled>Clear transcript</button></div>
   </section>
 
   <div class="session-status">
@@ -80,29 +81,23 @@
     <div class="model-actions" id="modelActions"><button id="useCloudBtn" class="ghost">Use cloud instead</button><button id="retryModelBtn" class="ghost" hidden>Retry download</button></div>
   </section>
 
-  <div class="transcript-tools"><span>Transcript</span><button id="findBtn" title="Find in transcript (Ctrl+F / ⌘F)" aria-expanded="false" aria-controls="findPanel">Find</button></div>
-  <div id="findPanel" class="find-panel" hidden role="search" aria-label="Find in transcript">
-    <input id="findInput" type="search" placeholder="Find in transcript…" aria-label="Find in transcript" autocomplete="off" spellcheck="false">
-    <div class="find-navigation"><span id="findCount" role="status">Find text</span><button id="findPrev" aria-label="Previous match" title="Previous match (Shift+Enter)" disabled>↑</button><button id="findNext" aria-label="Next match" title="Next match (Enter)" disabled>↓</button><button id="findClose" aria-label="Close find" title="Close (Escape)">×</button></div>
-  </div>
   <main id="transcript" class="transcript" tabindex="0" aria-label="Transcript" aria-live="off">
     <div class="empty" id="emptyHint">
-      <div class="empty-symbol" aria-hidden="true">Aa</div>
-      <h1>Your tab, in words.</h1>
-      <p>Play a video, podcast, or meeting in the source tab. Press <strong>Start</strong> to see its words here.</p>
-      <p class="empty-detail">Tab audio stays audible. No microphone needed.</p>
+      <h1>Live meeting transcript</h1>
+      <p>Press <strong>Start</strong> to transcribe your meeting tab. The audio stays audible.</p>
+      <p>Select a passage and copy it into your AI chat.</p>
+      <p class="empty-detail">Download the full transcript before closing this view. Text is not saved automatically.</p>
     </div>
   </main>
 
-  <button id="jumpLatestBtn" class="jump-latest" hidden>↓ Jump to latest</button>
+  <button id="jumpLatestBtn" class="jump-latest" hidden>↓ Back to live</button>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden>Copied</div>
   <div id="undoBar" class="undo-bar" hidden><span role="status">Transcript cleared</span><button id="undoClearBtn">Undo</button><button id="undoDismiss" aria-label="Dismiss undo" title="Discard recovery copy">×</button></div>
   <footer class="footer">
-    <div class="stats"><span id="wordCount">0 words</span></div>
+    <span id="wordCount" class="sr-only">0 words</span>
     <div class="actions">
-      <button id="copyBtn" title="Copy the transcript, or just your selection" disabled>Copy</button>
-      <button id="downloadBtn" title="Save transcript as a text file" disabled>Save</button>
-      <button id="clearBtn" class="danger" title="Clear transcript" disabled>Clear</button>
+      <button id="copyBtn" aria-describedby="wordCount" title="Copy the whole transcript, or only the passage you select" disabled>Copy all</button>
+      <button id="downloadBtn" title="Download the full transcript as a text file, even with text selected" disabled>Download</button>
     </div>
   </footer>
   <script type="module" src="sidepanel.js"></script>

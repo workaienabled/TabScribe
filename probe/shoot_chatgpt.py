@@ -10,12 +10,14 @@ EXAMPLE = [
     'Let’s start with the product review. The goal is to make the transcript easier to read without interrupting the conversation.',
     'We agreed to keep the controls compact. Preferences should be easy to find, but stay out of the way while you are listening.',
     'If you scroll up to review an earlier point, new words should not pull you back down. You can return to the latest text when you are ready.',
-    'The next step is to test the complete flow: capture, read, find a phrase, and save the notes. The audio must remain audible throughout.',
+    'Select the relevant passage, copy it into your AI chat, and ask your question. At the end of the meeting, download the full transcript.',
     'Before we finish, let’s confirm the follow-up: review the draft on Thursday, then share the final notes with the team.',
 ]
 
 ui = UI()
 try:
+    ui.size(360, 680)
+    ui.shot('focused-empty')
     ui.fixture(1)
     ui.capture_store()
     ui.js("fixtureStore.clear(); document.getElementById('tsToggle').dispatchEvent(new Event('change'))")
@@ -25,16 +27,19 @@ try:
         ui.size(420, 820)
         ui.js(f"document.getElementById('themeSel').value='{theme}'; document.getElementById('themeSel').dispatchEvent(new Event('change')); document.getElementById('transcript').scrollTop=0")
         time.sleep(.15)
-        ui.shot(f'preview-{theme}')
-    ui.js("document.getElementById('findBtn').click(); document.getElementById('findInput').value='review'; document.getElementById('findInput').dispatchEvent(new Event('input'))")
-    ui.shot('preview-find')
-    ui.js("document.getElementById('findClose').click(); document.getElementById('prefsBtn').click()")
-    ui.shot('preview-preferences')
+        ui.shot(f'focused-{theme}')
+    ui.js("(() => {const n=document.querySelectorAll('.seg .txt')[3].firstChild;const r=document.createRange();r.setStart(n,0);r.setEnd(n,75);getSelection().removeAllRanges();getSelection().addRange(r);document.querySelectorAll('.seg')[3].scrollIntoView({block:'center'});})()")
+    time.sleep(.15)
+    ui.shot('focused-selection')
+    ui.js("getSelection().removeAllRanges();document.getElementById('prefsBtn').click()")
+    ui.shot('focused-preferences')
     ui.size(300, 400)
-    ui.shot('preview-short-preferences')
-    ui.js("document.getElementById('prefsCloseBtn').click(); document.getElementById('clearBtn').click()")
+    ui.shot('focused-short-preferences')
+    ui.js("document.getElementById('clearBtn').scrollIntoView({block:'nearest'})")
+    ui.shot('focused-clear-setting')
+    ui.js("document.getElementById('clearBtn').click()")
     ui.size(320, 680)
-    ui.shot('preview-clear-undo')
+    ui.shot('focused-clear-undo')
 finally:
     ui.chrome.kill()
     ui.temp.cleanup()

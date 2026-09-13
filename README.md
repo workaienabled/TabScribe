@@ -1,6 +1,8 @@
 # TabScribe
 
-Live transcription of a Chrome tab's audio, in a side panel or a separate window.
+Focused live meeting transcription from the current Chrome tab. Copy a passage
+into your chosen AI chat, then download the full transcript when the meeting ends.
+Use the side panel or move it into a separate window.
 The tab stays audible; no microphone is needed. Chrome 150+ is required for
 on-device recognition. The product's scope and the founder's verbatim goal are
 recorded in [`PRODUCT.md`](PRODUCT.md).
@@ -9,7 +11,7 @@ recorded in [`PRODUCT.md`](PRODUCT.md).
 
 1. Open `chrome://extensions` and turn on **Developer mode**.
 2. Choose **Load unpacked** and select this repository's `extension/` directory.
-3. Pin TabScribe. Open a tab containing a video, podcast, or meeting.
+3. Pin TabScribe and open your meeting tab.
 4. Click TabScribe's **toolbar icon** on that tab, then press **Start**.
 
 The toolbar click grants access to that tab. Opening the extension page directly
@@ -25,16 +27,20 @@ reopen its panel. Save any transcript before reloading.
   If recognition was running, it resumes there. Window size is remembered.
 - **Gear:** opens grouped preferences. Escape or the close button dismisses them.
   The compact toolbar stays on one row; at narrow widths the pop-out is icon-only.
-- **Find:** search transcript segments without changing the text or your selection.
-  Ctrl+F / ⌘F opens it, Enter advances, Shift+Enter goes back, and Escape closes it.
 - **Auto-scroll:** follows new text only while you are at the bottom. Scroll up to
-  read history; **Jump to latest** returns you without changing your preference.
-- **Copy:** copies your selection, or the whole transcript when nothing is selected.
+  read history; **Back to live** returns you without covering transcript text or
+  changing your auto-scroll preference.
+- **Copy selection / Copy all:** the label shows exactly what will be copied.
   **Select to copy** is on by default. The independent **Copy toast** toggle controls
-  the brief “Copied” confirmation.
-- **Save:** downloads a plain-text `.txt` file, with timestamps if enabled.
-- **Clear:** immediately clears text, including the current utterance, and keeps
-  listening. **Undo** restores the cleared text before anything received since.
+  the brief “Copied” confirmation for both automatic and manual copying. Copying
+  does not replace the recognition status on success. Paste the passage into your own AI chat;
+  TabScribe does not send transcripts to an AI provider.
+- **Download:** always downloads the entire transcript as a plain-text `.txt` file,
+  even with text selected, with timestamps if enabled. Download before closing:
+  transcripts are not saved automatically.
+- **Gear → Clear transcript:** immediately clears text, including the current
+  utterance, and keeps listening. Preferences close to reveal **Undo**, which
+  restores the cleared text before anything received since.
   Only the most recent Clear is recoverable; recovery is held in this view's memory
   until used, dismissed, replaced by another Clear, or the view is closed.
 
@@ -55,11 +61,11 @@ Turning off **On-device only**, or choosing **Use cloud instead**, uses Chrome's
 cloud recognition and sends audio to Google's speech service. No cloud fallback
 happens automatically. The extension UI has no remote fonts, analytics, or scripts.
 Transcripts are kept in memory; pop-out handoff temporarily uses session storage.
-Use Save before closing the view. Preferences persist; transcript history does not.
+Use Download before closing the view. Preferences persist; transcript history does not.
 
 ## Development and verification
 
-`main` preserves the pre-redesign source; `chatgpt` contains this UI/UX pass.
+`main` preserves the pre-redesign source; `chatgpt` contains the focused UI.
 These are local branches. This task did not publish a repository or update the rd
 fleet. Fleet tooling is documented separately in [`deploy/README.md`](deploy/README.md).
 
@@ -74,7 +80,8 @@ Start your own Xvfb on that display first; the runner deliberately refuses commo
 user-display numbers. It runs tests serially because audio fixtures share port 8899.
 Full logs and exact exit codes go to `artifacts/chatgpt/`. The known audio scripts
 are scored by word error rate, not by visual inspection. UI fixture tests are
-separate from real speech-recognition tests.
+separate from real speech-recognition tests. `probe/focus_test.py` tests the core
+meeting-to-copy-to-download flow against real clipboard and file contents.
 
 After committing verified source, `python3 make-chatgpt-package.py` builds the
 separately named extension/source ZIPs under `artifacts/chatgpt/`, byte-checks every
