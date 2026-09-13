@@ -33,6 +33,9 @@ const el = {
   selectToCopy: document.getElementById('selectToCopy'),
   copyToast: document.getElementById('copyToast'),
   prefsBtn: document.getElementById('prefsBtn'),
+  prefsClose: document.getElementById('prefsCloseBtn'),
+  modeSummary: document.getElementById('modeSummary'),
+  stateLabel: document.getElementById('stateLabel'),
   prefsPanel: document.getElementById('prefsPanel'),
   toast: document.getElementById('toast'),
   transcript: document.getElementById('transcript'),
@@ -149,6 +152,17 @@ function setStatus(text, isError = false) {
 
 function setState(state) {
   el.dot.dataset.state = state;
+  el.stateLabel.textContent = ({idle: 'Ready', listening: 'Live', starting: 'Starting', restarting: 'Reconnecting', stopped: 'Stopped', error: 'Attention'})[state] || state;
+  updateModeSummary();
+}
+
+function updateModeSummary() {
+  const active = !!transcriber?.running;
+  const local = active ? transcriber.options.processLocally : el.localOnly.checked;
+  const lang = active ? transcriber.options.lang : el.lang.value;
+  el.modeSummary.textContent = local ? 'On-device' : 'Cloud';
+  el.modeSummary.classList.toggle('cloud', !local);
+  el.modeSummary.title = `${langName(lang)} · ${local ? 'Recognition stays on this device' : 'Audio is sent to Google for recognition'}${active ? ' · Current session' : ' · Next session'}`;
 }
 
 /* ---------------------------------------------------------------- selection */
@@ -224,6 +238,7 @@ function render(store) {
 
   el.empty.style.display = segs.length === 0 ? '' : 'none';
   el.words.textContent = `${store.wordCount()} words`;
+  el.copy.disabled = el.download.disabled = el.clear.disabled = store.isEmpty();
 
   const showTs = el.timestamps.checked;
   const sel = transcriptSelection();
@@ -491,6 +506,7 @@ function applyPrefs(p) {
   el.selectToCopy.checked = p.selectToCopy;
   el.copyToast.checked = p.copyToast;
   setPrefsOpen(p.prefsOpen, { save: false });
+  updateModeSummary();
 }
 
 /** Show or hide the preferences group. */
@@ -502,6 +518,7 @@ function setPrefsOpen(open, { save = true } = {}) {
 
 /** Persist whatever the controls currently say. */
 function savePrefsFromUi() {
+  updateModeSummary();
   return prefs.set({
     lang: el.lang.value,
     localOnly: el.localOnly.checked,
@@ -526,6 +543,7 @@ prefs.onChange((diff) => {
   if (diff.selectToCopy !== undefined) el.selectToCopy.checked = diff.selectToCopy;
   if (diff.copyToast !== undefined) el.copyToast.checked = diff.copyToast;
   if (diff.prefsOpen !== undefined) setPrefsOpen(diff.prefsOpen, { save: false });
+  updateModeSummary();
 });
 
 /* ------------------------------------------------------------------ pop-out */
@@ -839,6 +857,7 @@ function clear() {
   el.transcript.replaceChildren(el.empty);
   el.empty.style.display = '';
   el.words.textContent = '0 words';
+  el.copy.disabled = el.download.disabled = el.clear.disabled = true;
 
   // Clearing the store alone would leave the in-flight utterance alive inside the
   // recognition session, and it would reappear on the next event. reset() abandons
@@ -868,6 +887,17 @@ el.useCloud.addEventListener('click', useCloudInstead);
 el.retryModel.addEventListener('click', retryModel);
 el.prefsBtn.addEventListener('click', () => {
   setPrefsOpen(el.prefsPanel.hidden);
+});
+el.prefsClose.addEventListener('click', () => {
+  setPrefsOpen(false);
+  el.prefsBtn.focus();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !el.prefsPanel.hidden) {
+    setPrefsOpen(false);
+    el.prefsBtn.focus();
+    event.preventDefault();
+  }
 });
 el.copyToast.addEventListener('change', savePrefsFromUi);
 el.timestamps.addEventListener('change', () => {
