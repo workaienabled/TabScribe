@@ -166,7 +166,7 @@ def mic_permission(ui):
     baseline = ui.js("""({
       segs: document.querySelectorAll('#transcript .seg').length,
       text: document.getElementById('transcript').innerText.trim(),
-      words: document.getElementById('wordCount').textContent,
+      words: String([...document.querySelectorAll('#transcript .seg')].map(e => e.innerText).join(' ').split(/[^A-Za-z0-9'%:.-]+/).filter(Boolean).length) + ' words',
     })""")
 
     for name, err in [('denied', 'NotAllowedError'), ('no device', 'NotFoundError'),
@@ -191,7 +191,7 @@ def mic_permission(ui):
         after = ui.js("""({
           segs: document.querySelectorAll('#transcript .seg').length,
           text: document.getElementById('transcript').innerText.trim(),
-          words: document.getElementById('wordCount').textContent,
+          words: String([...document.querySelectorAll('#transcript .seg')].map(e => e.innerText).join(' ').split(/[^A-Za-z0-9'%:.-]+/).filter(Boolean).length) + ' words',
           status: document.getElementById('status').textContent,
           isError: document.getElementById('status').classList.contains('error'),
         })""")

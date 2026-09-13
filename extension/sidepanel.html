@@ -7,29 +7,24 @@
   <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body>
-  <header class="bar">
-    <div class="title">
-      <span class="dot" id="dot" data-state="idle" aria-hidden="true"></span>
-      <strong>TabScribe</strong>
-      <span class="mode-summary" id="modeSummary" hidden>Cloud</span>
-    </div>
-    <div class="target" id="target" title="Tab being captured">Choose your meeting tab to begin</div>
-  </header>
-
   <!--
     One row, icons only. Record is a single toggle rather than Start + Stop: the
     two were mutually exclusive, so one control with a state is both smaller and
     less ambiguous. Every icon keeps an aria-label and a title, because an icon
     alone is not an accessible name and is not discoverable with a mouse.
+
+    The title bar and the footer are gone: the panel is this row and the
+    transcript. The recording dot rides on the Record control, and the tab name
+    lives in its tooltip, so nothing that mattered was lost with the bars.
   -->
   <div class="controls" role="group" aria-label="Transcription controls">
+    <span class="dot" id="dot" data-state="idle" hidden aria-hidden="true"></span>
     <button id="recordBtn" class="primary record" aria-pressed="false"
             aria-label="Start recording" title="Start transcribing this tab">
       <span class="record-icon" aria-hidden="true"></span>
     </button>
 
     <button id="copyBtn" class="icon-btn" aria-label="Copy transcript"
-            aria-describedby="wordCount"
             title="Copy the whole transcript, or only the passage you select" disabled>
       <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="currentColor">
         <path d="M10.5 1H4a1.5 1.5 0 0 0-1.5 1.5V11h1.5V2.5h6.5V1z"/>
@@ -68,8 +63,11 @@
       <span class="mic-slash" aria-hidden="true"></span>
     </button>
 
-    <button id="popoutBtn" class="icon-btn popout" aria-label="Open in window" title="Move TabScribe into its own window">
+    <!-- Icon AND text: this is the one control worth naming in place, because
+         moving to a window is a decision rather than a frequent action. -->
+    <button id="popoutBtn" class="popout" aria-label="Open in window" title="Move TabScribe into its own window">
       <span class="popout-icon" aria-hidden="true">⧉</span>
+      <span class="popout-label">Window</span>
     </button>
 
     <button id="prefsBtn" class="icon-btn prefs-toggle" aria-expanded="false"
@@ -119,6 +117,13 @@
     <button id="clearBtn" class="danger" title="Delete this transcript, including from the download (can be undone)" disabled>Delete transcript</button>
   </div>
 
+  <!-- Cloud recognition sends audio to Google. That used to be a badge in the
+       title bar; with the bar gone it needs its own line, because it is the one
+       piece of status the user must not miss. -->
+  <p id="cloudWarning" class="cloud-warning" hidden>
+    Cloud recognition: this tab's audio is sent to Google.
+  </p>
+
   <div id="status" class="status" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <section id="modelPanel" class="model-panel" hidden aria-live="polite">
@@ -149,12 +154,6 @@
   <button id="jumpLatestBtn" class="jump-latest" hidden>↓ Back to live</button>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden>Copied</div>
   <div id="undoBar" class="undo-bar" hidden><span role="status">Transcript deleted</span><button id="undoClearBtn">Undo</button><button id="undoDismiss" aria-label="Discard recovery copy" title="Discard recovery copy">×</button></div>
-  <footer class="footer">
-    <div class="stats">
-      <span id="wordCount">0 words</span>
-      <span id="unsavedDot" class="unsaved-dot" title="Not downloaded yet" hidden>&bull; not saved</span>
-    </div>
-  </footer>
   <script type="module" src="sidepanel.js"></script>
 </body>
 </html>

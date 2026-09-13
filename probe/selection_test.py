@@ -44,7 +44,6 @@ function render(store) {
   lastStore = store;
   const segs = store.liveSegments();
   el.empty.style.display = segs.length === 0 ? '' : 'none';
-  el.words.textContent = `${store.wordCount()} words`;
   const showTs = el.timestamps.checked;
   const frag = document.createDocumentFragment();
   for (const seg of segs) {
@@ -254,7 +253,7 @@ def main():
           const sel = window.getSelection();
           sel.removeAllRanges();
           sel.addRange(range);
-          return { ok: true, text: sel.toString(), words: document.getElementById('wordCount').textContent };
+          return { ok: true, text: sel.toString(), words: String([...document.querySelectorAll('#transcript .seg')].map(e => e.innerText).join(' ').split(/[^A-Za-z0-9'%:.-]+/).filter(Boolean).length) + ' words' };
         })()
         """)
         print(f"  selected: {json.dumps(selected)}", flush=True)
@@ -271,13 +270,13 @@ def main():
         deadline = time.time() + 25
         while time.time() < deadline:
             now = chrome.evaluate(panel_sid,
-                                  "document.getElementById('wordCount').textContent",
+                                  "String([...document.querySelectorAll('#transcript .seg')].map(e => e.innerText).join(' ').split(/[^A-Za-z0-9'%:.-]+/).filter(Boolean).length) + ' words'",
                                   await_promise=False)
             if int(re.match(r"\d+", now).group()) > words_at_selection + 5:
                 grew = True
                 break
             time.sleep(0.5)
-        words_now = chrome.evaluate(panel_sid, "document.getElementById('wordCount').textContent",
+        words_now = chrome.evaluate(panel_sid, "String([...document.querySelectorAll('#transcript .seg')].map(e => e.innerText).join(' ').split(/[^A-Za-z0-9'%:.-]+/).filter(Boolean).length) + ' words'",
                                     await_promise=False)
         print(f"  words {words_at_selection} -> {words_now}", flush=True)
         checks.add("transcript updated while text was selected", grew,
@@ -314,7 +313,7 @@ def main():
         checks.add("Copy copies the selection, not the whole transcript",
                    clip == original.strip(), f"{len(clip)} chars vs selection {len(original.strip())}")
 
-        whole = chrome.evaluate(panel_sid, "document.getElementById('wordCount').textContent",
+        whole = chrome.evaluate(panel_sid, "String([...document.querySelectorAll('#transcript .seg')].map(e => e.innerText).join(' ').split(/[^A-Za-z0-9'%:.-]+/).filter(Boolean).length) + ' words'",
                                 await_promise=False)
         checks.add("clipboard is shorter than the full transcript",
                    len(clip.split()) < int(re.match(r"\d+", whole).group()),

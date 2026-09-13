@@ -403,7 +403,7 @@ def main():
             time.sleep(0.5)
         print("  playback ended", flush=True)
 
-        words_before = chrome.evaluate(panel_sid, "document.getElementById('wordCount').textContent",
+        words_before = chrome.evaluate(panel_sid, "String([...document.querySelectorAll('#transcript .seg')].map(e => e.innerText).join(' ').split(/[^A-Za-z0-9'%:.-]+/).filter(Boolean).length) + ' words'",
                                        await_promise=False)
         print(f"  words before stop: {words_before}", flush=True)
 
@@ -480,7 +480,7 @@ def main():
         deadline = time.time() + 15
         stable, last = 0, None
         while time.time() < deadline:
-            now = chrome.evaluate(panel_sid, "document.getElementById('wordCount').textContent",
+            now = chrome.evaluate(panel_sid, "String([...document.querySelectorAll('#transcript .seg')].map(e => e.innerText).join(' ').split(/[^A-Za-z0-9'%:.-]+/).filter(Boolean).length) + ' words'",
                                   await_promise=False)
             stable = stable + 1 if now == last else 0
             last = now
@@ -489,7 +489,7 @@ def main():
             time.sleep(0.4)
         chrome.evaluate(panel_sid, "document.getElementById('clearBtn').click()", await_promise=False)
         time.sleep(0.4)
-        after = chrome.evaluate(panel_sid, "document.getElementById('wordCount').textContent",
+        after = chrome.evaluate(panel_sid, "String([...document.querySelectorAll('#transcript .seg')].map(e => e.innerText).join(' ').split(/[^A-Za-z0-9'%:.-]+/).filter(Boolean).length) + ' words'",
                                 await_promise=False)
         checks.add("Clear resets the transcript", after.startswith("0"), f"wordCount={after}")
 

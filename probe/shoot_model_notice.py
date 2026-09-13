@@ -67,7 +67,6 @@ def main():
                 document.getElementById('modelPanel').hidden = true;
                 document.getElementById('status').textContent =
                   'Ready. Press Record to transcribe this tab.';
-                document.getElementById('target').textContent = 'Quarterly review call';
                 document.getElementById('prefsPanel').hidden = true;
                 document.getElementById('prefsBtn').setAttribute('aria-expanded', 'false');
                 return true;
@@ -96,7 +95,6 @@ def main():
                 const toast = document.getElementById('toast');
                 toast.hidden = false; toast.classList.add('show');
                 document.getElementById('status').textContent = '';
-                document.getElementById('wordCount').textContent = '21 words';
                 return true;
               })()
             """),

@@ -98,13 +98,13 @@ def icon_actions(ui):
         copy: shape('copyBtn'),
         download: shape('downloadBtn'),
         clearScreen: shape('clearScreenBtn'),
-        footerActions: !!document.querySelector('.footer .actions button'),
+        footerGone: !document.querySelector('footer.footer'),
       };
     })()""")
     ui.check('Copy and Download moved into the top control row',
              top['copyInRow'] and top['downloadInRow'], top)
-    ui.check('the footer no longer carries duplicate action buttons',
-             top['footerActions'] is False, top['footerActions'])
+    ui.check('the footer bar is gone entirely',
+             top['footerGone'] is True, top['footerGone'])
     for key in ('copy', 'download', 'clearScreen'):
         shape = top[key]
         ui.check(f'{key} is icon-only',
@@ -222,35 +222,35 @@ def unsaved_warning(ui, download_dir):
     # capture_store() must run AFTER this fixture's reload: it intercepts the
     # live render to expose the real store, and a navigation discards it.
     ui.capture_store()
-    present = ui.js("!!document.getElementById('unsavedDot') && !!document.getElementById('warnUnsaved')")
+    present = ui.js("!!document.getElementById('warnUnsaved')")
     if not present:
         for name in ('an undownloaded transcript arms the close warning',
-                     'the footer shows an unsaved marker',
+                     'the Download control marks the transcript unsaved',
                      'downloading disarms the close warning',
-                     'and hides the unsaved marker',
+                     'and the Download control stops marking it',
                      'new speech after a download makes it unsaved again',
                      'the warning can be turned off'):
-            ui.check(name, False, 'unsavedDot/warnUnsaved missing')
+            ui.check(name, False, 'warnUnsaved missing')
         return
     armed = ui.js("""(() => {
       const e = new Event('beforeunload', {cancelable: true});
       window.dispatchEvent(e);
       return {prevented: e.defaultPrevented,
-              dot: !document.getElementById('unsavedDot').hidden};
+              dot: document.getElementById('downloadBtn').classList.contains('unsaved')};
     })()""")
     ui.check('an undownloaded transcript arms the close warning',
              armed['prevented'] is True, armed)
-    ui.check('the footer shows an unsaved marker', armed['dot'], armed)
+    ui.check('the Download control marks the transcript unsaved', armed['dot'], armed)
 
     ui.download_and_read(download_dir)
     saved = ui.js("""(() => {
       const e = new Event('beforeunload', {cancelable: true});
       window.dispatchEvent(e);
       return {prevented: e.defaultPrevented,
-              dot: !document.getElementById('unsavedDot').hidden};
+              dot: document.getElementById('downloadBtn').classList.contains('unsaved')};
     })()""")
     ui.check('downloading disarms the close warning', saved['prevented'] is False, saved)
-    ui.check('and hides the unsaved marker', saved['dot'] is False, saved)
+    ui.check('and the Download control stops marking it', saved['dot'] is False, saved)
 
     # New speech after a save must re-arm it, or the second half of a meeting
     # would close silently. Appending through the real store, via the same
@@ -267,7 +267,7 @@ def unsaved_warning(ui, download_dir):
       const e = new Event('beforeunload', {cancelable: true});
       window.dispatchEvent(e);
       return {prevented: e.defaultPrevented, applied: !!store,
-              dot: !document.getElementById('unsavedDot').hidden};
+              dot: document.getElementById('downloadBtn').classList.contains('unsaved')};
     })()""")
     ui.check('the append reached the real store',
              again['applied'] is True, again)

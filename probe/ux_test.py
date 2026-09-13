@@ -163,7 +163,7 @@ def shell(ui):
       liveStatus: document.querySelector('#status').getAttribute('role'),
       readable: parseFloat(getComputedStyle(document.querySelector('#transcript')).fontSize),
       brand: !!document.querySelector('.brand-mark'),
-      modeHidden: document.getElementById('modeSummary')?.hidden,
+      modeHidden: document.getElementById('cloudWarning')?.hidden,
       prefsPos: getComputedStyle(document.getElementById('prefsPanel')).position,
       chrome: (() => { const t=document.getElementById('transcript').getBoundingClientRect(); return t.height/innerHeight; })(),
       focusable: document.querySelector('#transcript').tabIndex,
@@ -173,7 +173,7 @@ def shell(ui):
     ui.check('transcript uses compact 13px type by default', info['readable'] == 13, info)
     ui.check('transcript dominates a typical side panel', info['chrome'] >= 0.62, info)
     ui.check('no decorative brand mark', not info['brand'])
-    ui.check('on-device mode does not add a badge', info.get('modeHidden') is True, info)
+    ui.check('on-device mode shows no cloud warning', info.get('modeHidden') is True, info)
     ui.check('preferences sit in the document flow', info['prefsPos'] != 'absolute', info)
     ui.check('transcript can receive keyboard focus', info['focusable'] == 0)
     ui.check('empty transcript actions are disabled', all(info['controls']))

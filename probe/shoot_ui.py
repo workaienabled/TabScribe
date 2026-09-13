@@ -22,7 +22,7 @@ try:
     ui.capture_store()
     ui.js("fixtureStore.clear(); document.getElementById('tsToggle').dispatchEvent(new Event('change'))")
     ui.js(f"({json.dumps(EXAMPLE)}).forEach((text,i)=>fixtureStore.update(i,text,true,i*16000)); document.getElementById('tsToggle').checked=true; document.getElementById('tsToggle').dispatchEvent(new Event('change'))")
-    ui.js("document.getElementById('target').textContent='Product review · example transcript'; document.getElementById('status').textContent='Example text. No audio is being captured.'")
+    ui.js("document.getElementById('status').textContent='Example text. No audio is being captured.'")
     for theme in ['light', 'dark']:
         ui.size(420, 820)
         ui.js(f"document.getElementById('themeSel').value='{theme}'; document.getElementById('themeSel').dispatchEvent(new Event('change')); document.getElementById('transcript').scrollTop=0")

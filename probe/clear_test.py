@@ -104,7 +104,7 @@ def transcript_text(chrome, sid):
 
 
 def word_count(chrome, sid):
-    txt = chrome.evaluate(sid, "document.getElementById('wordCount').textContent",
+    txt = chrome.evaluate(sid, "String([...document.querySelectorAll('#transcript .seg')].map(e => e.innerText).join(' ').split(/[^A-Za-z0-9'%:.-]+/).filter(Boolean).length) + ' words'",
                           await_promise=False) or "0"
     return int(re.match(r"\d+", txt).group())
 

@@ -36,12 +36,7 @@ button.primary { font-weight: 500; background: var(--accent); color: var(--accen
 button.danger { color: var(--muted); }
 button.danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
 
-.bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); flex: none; }
-.title { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.title strong { font-size: 13px; font-weight: 650; }
-.target { font-size: 11px; color: var(--muted); max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mode-summary { flex: none; color: var(--danger); font-size: 10px; font-weight: 600; padding: 1px 6px; border: 1px solid var(--danger); border-radius: 99px; }
-.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; margin-right: 1px; }
 .dot[data-state="listening"] { background: var(--ok); }
 .dot[data-state="error"] { background: var(--danger); }
 .dot[data-state="starting"], .dot[data-state="restarting"] { background: var(--accent); }
@@ -55,7 +50,10 @@ button.icon-btn { display: inline-flex; align-items: center; justify-content: ce
   padding: 0; width: 28px; height: 28px; flex: none; }
 button.icon-btn svg { display: block; }
 .gear { display: block; }
-button.popout { color: var(--accent); background: transparent; }
+button.popout { display: inline-flex; align-items: center; justify-content: center;
+  gap: 5px; padding: 5px 9px; height: 28px; flex: none;
+  color: var(--accent); background: transparent; font-size: 11.5px; }
+.popout-label { line-height: 1; }
 .popout-icon { font-size: 13px; line-height: 1; }
 button.prefs-toggle[aria-expanded="true"] { color: var(--fg); border-color: var(--muted); }
 body.view-window #popoutBtn { display: none; }
@@ -119,6 +117,9 @@ select { min-height: 28px; padding: 4px 6px; border: 1px solid var(--border); bo
 .field-hint { color: var(--muted); font-size: 11px; margin: 8px 0; }
 #clearBtn { margin-top: 4px; }
 
+.cloud-warning { flex: none; margin: 0; padding: 5px 12px; background: var(--soft-accent);
+  border-bottom: 1px solid var(--border); color: var(--danger);
+  font-size: 11px; font-weight: 600; }
 .status { padding: 0 12px 8px; color: var(--muted); font-size: 11.5px; flex: none; overflow-wrap: anywhere; }
 .status.error { color: var(--danger); }
 .status:empty { display: none; }
@@ -152,15 +153,15 @@ select { min-height: 28px; padding: 4px 6px; border: 1px solid var(--border); bo
 .undo-bar span { margin-right: auto; }
 .undo-bar button { padding: 3px 9px; background: transparent; }
 #undoClearBtn { color: var(--accent); font-weight: 650; }
-.footer { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--border); background: var(--surface); }
-.stats { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.unsaved-dot { color: var(--accent); font-weight: 600; }
 
 /* Cleared from view but still in the file. This has to be visible, or "cleared"
    and "deleted" look the same on screen and the download surprises people. */
 .hidden-notice { flex: none; display: flex; align-items: center; gap: 6px;
   padding: 5px 12px; border-bottom: 1px solid var(--border);
   background: var(--surface); color: var(--muted); font-size: 11px; }
+/* Not downloaded yet. The footer marker is gone, so the state rides on the
+   control the user would actually press. */
+button#downloadBtn.unsaved { color: var(--accent); border-color: var(--accent); }
 .link-btn { padding: 1px 6px; border: 0; background: transparent; color: var(--accent); font-size: 11px; }
 .jump-latest { flex: none; align-self: flex-end; margin: 0 12px 4px; padding: 2px 8px; min-height: 0; border: 0; background: transparent; color: var(--accent); font-size: 11px; }
 .toast { position: absolute; z-index: 8; left: 50%; bottom: 48px; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 4px 12px; border-radius: 12px; background: var(--fg); color: var(--bg); font-size: 11.5px; pointer-events: none; opacity: 0; transition: opacity .12s ease-out; }

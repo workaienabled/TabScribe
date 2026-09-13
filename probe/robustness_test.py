@@ -165,20 +165,24 @@ def review(ui):
     })()""")
     time.sleep(.3)
     fits = ui.js("""(() => {
-      const f = document.querySelector('.footer').getBoundingClientRect();
+      const d = document.getElementById('downloadBtn').getBoundingClientRect();
       const t = document.getElementById('transcript').getBoundingClientRect();
-      return {footerBottom: f.bottom, viewport: innerHeight, transcript: t.height};
+      return {downloadBottom: d.bottom, downloadTop: d.top,
+              viewport: innerHeight, transcript: t.height};
     })()""")
     ui.check('Download stays on screen with both optional panels open',
-             fits['footerBottom'] <= fits['viewport'] + 1, fits)
+             fits['downloadBottom'] <= fits['viewport'] + 1 and fits['downloadTop'] >= 0,
+             fits)
 
     # Failure messages must name controls that exist.
     labels = ui.js("""(() => {
-      const html = document.documentElement.innerHTML;
-      return {save: /\\bSave\\b/.test(document.querySelector('.footer').innerText),
-              download: document.getElementById('downloadBtn').textContent.trim()};
+      const row = document.querySelector('.controls');
+      return {save: /\\bSave\\b/.test(row.innerText + ' ' +
+                [...row.querySelectorAll('[aria-label]')]
+                  .map(e => e.getAttribute('aria-label')).join(' ')),
+              download: document.getElementById('downloadBtn').getAttribute('aria-label')};
     })()""")
-    ui.check('the footer has no control named Save', not labels['save'], labels)
+    ui.check('no control is named Save', not labels['save'], labels)
 
     # The only irreversible control in the undo bar must say what it does.
     ui.check('Discard recovery copy is named for its effect',

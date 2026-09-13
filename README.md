@@ -38,7 +38,10 @@ accessible name; none carries its meaning in colour alone.
 - **Open in window:** moves the transcript into a pop-out and closes the sidebar.
   If recognition was running, it resumes there. Window size is remembered.
 - **Gear:** opens compact preferences in place. Escape or the gear dismisses them.
-  All seven controls stay on one row down to 280px.
+  All the controls stay on one row down to 280px.
+- There is no title bar and no footer: the panel is the control row and the
+  transcript. Cloud recognition, when enabled, says so on its own line above the
+  transcript.
 - **Auto-scroll:** follows new text only while you are at the bottom. Scroll up to
   read history; **Back to live** returns you without covering transcript text or
   changing your auto-scroll preference.
@@ -51,10 +54,16 @@ accessible name; none carries its meaning in colour alone.
 - **Download:** always downloads the entire transcript as a plain-text `.txt` file,
   even with text selected, with timestamps if enabled. Download before closing:
   transcripts are not saved automatically.
-- **Warn before closing unsaved** (on by default): if you close TabScribe with a
-  transcript you never downloaded, Chrome shows its own "unsaved progress" prompt.
-  It disarms the moment you download, and re-arms if the meeting carries on
-  afterwards. A dot in the footer shows the same state at a glance.
+- **Your transcript survives the panel closing.** It is saved continuously and
+  restored the next time you open TabScribe, so closing the side panel — or the
+  browser — does not lose the meeting. It is kept in browser session storage, not
+  written to disk, and is discarded when Chrome fully exits, so **download before
+  you quit Chrome**.
+- **Warn before closing unsaved** (on by default): with the transcript in its own
+  **window**, Chrome shows its "unsaved progress" prompt if you close it without
+  downloading. Chrome does **not** run that prompt for side panels, which is why
+  the panel relies on the restore above rather than a warning. The Download
+  control is highlighted whenever there is something not yet saved.
 - **Include my microphone in the saved file** (on by default): also transcribes
   your own speech and merges it into the **downloaded file only**. It is never
   shown in the live transcript and never copied by Copy. See below.

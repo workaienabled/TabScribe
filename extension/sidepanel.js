@@ -29,7 +29,7 @@ const el = {
   hiddenCount: document.getElementById('hiddenCount'),
   showHidden: document.getElementById('showHiddenBtn'),
   micStatus: document.getElementById('micStatusBtn'),
-  unsavedDot: document.getElementById('unsavedDot'),
+  cloudWarning: document.getElementById('cloudWarning'),
   warnUnsaved: document.getElementById('warnUnsaved'),
   clear: document.getElementById('clearBtn'),
   undoBar: document.getElementById('undoBar'),
@@ -48,7 +48,6 @@ const el = {
   prefsBtn: document.getElementById('prefsBtn'),
   theme: document.getElementById('themeSel'),
   fontSize: document.getElementById('fontSizeSel'),
-  modeSummary: document.getElementById('modeSummary'),
   prefsPanel: document.getElementById('prefsPanel'),
   toast: document.getElementById('toast'),
   transcript: document.getElementById('transcript'),
@@ -57,7 +56,6 @@ const el = {
   status: document.getElementById('status'),
   dot: document.getElementById('dot'),
   target: document.getElementById('target'),
-  words: document.getElementById('wordCount'),
   modelPanel: document.getElementById('modelPanel'),
   modelIcon: document.getElementById('modelIcon'),
   modelTitle: document.getElementById('modelTitle'),
@@ -132,8 +130,8 @@ async function armCapture() {
     if (!res?.ok) return res || { ok: false, error: 'no response from background' };
 
     targetTabId = res.tabId;
-    el.target.textContent = res.title || `tab ${res.tabId}`;
-    el.target.title = res.title || '';
+    targetTitle = res.title || `tab ${res.tabId}`;
+    refreshRecordTitle();
 
     stream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -176,17 +174,40 @@ function setStatus(text, isError = false) {
 
 function setState(state) {
   el.dot.dataset.state = state;
+  // The dot rides in the control row now, and only appears when it says
+  // something: an always-grey dot next to an idle Record button is noise.
+  el.dot.hidden = (state === 'idle');
   updateModeSummary();
+  refreshRecordTitle();
+}
+
+/**
+ * Which tab is being captured, and in which mode.
+ *
+ * This used to be a title bar and a badge. With both gone, the information rides
+ * on the Record control's tooltip — the one control that is always present and
+ * always about the capture.
+ */
+let targetTitle = '';
+
+function refreshRecordTitle() {
+  const recording = el.record.getAttribute('aria-pressed') === 'true';
+  const what = targetTitle ? ` “${targetTitle}”` : ' this tab';
+  el.record.title = recording
+    ? `Stop transcribing${what}`
+    : `Start transcribing${what}`;
 }
 
 function updateModeSummary() {
   const active = !!transcriber?.running;
   const local = active ? transcriber.options.processLocally : el.localOnly.checked;
   const lang = active ? transcriber.options.lang : el.lang.value;
-  el.modeSummary.textContent = local ? 'On-device' : 'Cloud';
-  el.modeSummary.classList.toggle('cloud', !local);
-  el.modeSummary.hidden = local;
-  el.modeSummary.title = `${langName(lang)} · ${local ? 'Recognition stays on this device' : 'Audio is sent to Google for recognition'}${active ? ' · Current session' : ' · Next session'}`;
+  // Cloud recognition uploads audio. The badge that said so lived in the removed
+  // title bar, so it becomes its own line rather than disappearing with it.
+  el.cloudWarning.hidden = local;
+  el.cloudWarning.textContent = active
+    ? `Cloud recognition (${langName(lang)}): this tab's audio is sent to Google.`
+    : `Cloud recognition (${langName(lang)}): audio will be sent to Google from the next recording.`;
 }
 
 /* ---------------------------------------------------------------- selection */
@@ -335,7 +356,78 @@ function hasUnsavedTranscript() {
 }
 
 function refreshUnsavedUi() {
-  el.unsavedDot.hidden = !hasUnsavedTranscript();
+  // The footer marker is gone; the unsaved state is carried by the Download
+  // control itself, which is where the user would act on it.
+  const unsaved = hasUnsavedTranscript();
+  el.download.classList.toggle('unsaved', unsaved);
+  el.download.setAttribute('aria-label',
+    unsaved ? 'Download transcript (not saved yet)' : 'Download transcript');
+}
+
+/* ------------------------------------------------------------- persistence */
+
+/**
+ * Keep the transcript across a panel close.
+ *
+ * A Chrome side panel is not a tab: closing it, or closing the browser, destroys
+ * the document WITHOUT running the beforeunload prompt. Measured against real
+ * use — the warning fires in the pop-out window and never in the panel. A
+ * warning that only works in one of two modes is not a safety net, so the text
+ * is persisted continuously instead and restored on the next open. Losing the
+ * meeting stops depending on a dialog Chrome may never show.
+ *
+ * chrome.storage.session is the right store: it survives the panel closing and
+ * reopening, and is discarded when the browser exits, so a transcript is never
+ * written to disk behind the user's back.
+ */
+const AUTOSAVE_KEY = 'liveTranscript';
+let autosaveTimer = null;
+
+function scheduleAutosave() {
+  if (autosaveTimer) return;
+  // Coalesced: recognition updates several times a second and every write would
+  // otherwise hit storage.
+  autosaveTimer = setTimeout(async () => {
+    autosaveTimer = null;
+    try {
+      if (!transcriber || transcriber.store.isEmpty()) {
+        await chrome.storage.session.remove(AUTOSAVE_KEY);
+        return;
+      }
+      await chrome.storage.session.set({
+        [AUTOSAVE_KEY]: {
+          snapshot: transcriber.store.serialize(),
+          savedText,
+          micText: mic?.hasText() ? mic.store.serialize() : null,
+          at: Date.now(),
+        },
+      });
+    } catch (e) {
+      // Persistence is a safety net, never the thing that breaks a meeting.
+      console.warn('TabScribe autosave failed:', e);
+    }
+  }, 1200);
+}
+
+/** Restore a transcript left behind by a previous panel document. */
+async function restoreAutosave() {
+  try {
+    const stored = await chrome.storage.session.get(AUTOSAVE_KEY);
+    const saved = stored[AUTOSAVE_KEY];
+    if (!saved?.snapshot?.segments?.length) return false;
+    ensureTranscriber();
+    transcriber.store.restore(saved.snapshot);
+    if (typeof saved.savedText === 'string') savedText = saved.savedText;
+    if (saved.micText?.segments?.length) {
+      if (!mic) mic = new MicTranscriber({ onStateChange: onMicState });
+      mic.store.restore(saved.micText);
+    }
+    render(transcriber.store);
+    return true;
+  } catch (e) {
+    console.warn('TabScribe could not restore the previous transcript:', e);
+    return false;
+  }
 }
 
 function render(store) {
@@ -346,11 +438,11 @@ function render(store) {
   const segs = screenHidden.size ? all.filter((s) => !screenHidden.has(s.key)) : all;
 
   el.empty.style.display = all.length === 0 ? '' : 'none';
-  el.words.textContent = `${store.wordCount()} words`;
   el.copy.disabled = el.download.disabled = el.clear.disabled = store.isEmpty();
   el.clearScreen.disabled = segs.length === 0;
   hiddenNoticeRefresh(store);
   refreshUnsavedUi();
+  scheduleAutosave();
 
   const showTs = el.timestamps.checked;
   const sel = transcriptSelection();
@@ -391,8 +483,6 @@ function refreshSelectionUi() {
   el.copy.title = selecting
     ? 'Copy the passage you selected'
     : 'Copy the whole transcript, or only the passage you select';
-  if (selecting) el.copy.removeAttribute('aria-describedby');
-  else el.copy.setAttribute('aria-describedby', 'wordCount');
   el.transcript.classList.toggle('holding', selecting);
 
   // Selection gone: apply whatever was held back while it existed.
@@ -863,8 +953,8 @@ async function refreshTarget() {
   const res = await chrome.runtime.sendMessage({ type: 'GET_TARGET' });
   if (res?.ok) {
     targetTabId = res.tabId;
-    el.target.textContent = res.title || `tab ${res.tabId}`;
-    el.target.title = res.title || '';
+    targetTitle = res.title || `tab ${res.tabId}`;
+    refreshRecordTitle();
   }
 }
 
@@ -1371,7 +1461,6 @@ function clear() {
   following = true;
   el.jumpLatest.hidden = true;
   el.empty.style.display = '';
-  el.words.textContent = '0 words';
   el.copy.disabled = el.download.disabled = el.clear.disabled = true;
 
   // Clearing the store alone would leave the in-flight utterance alive inside the
@@ -1546,6 +1635,14 @@ async function previewModelState() {
     handoff = await claimHandoff();
   }
 
+  // A pop-out hand-off carries its own text; otherwise pick up whatever the last
+  // panel document left behind. Closing the side panel destroys it without any
+  // warning from Chrome, so this is what keeps a meeting from disappearing.
+  let restored = false;
+  if (!handoff.received) {
+    restored = await restoreAutosave();
+  }
+
   await refreshTarget();
   const cap = await armCapture();
 
@@ -1569,6 +1666,11 @@ async function previewModelState() {
     if (el.includeMic.checked && micGranted && !mic?.running) {
       setMicHint('Press Stop and Start in this window to include your microphone.', false);
     }
+    return;
+  }
+  if (restored) {
+    setStatus('Earlier transcript restored. Press Record to continue, '
+      + 'or Download to save it.');
     return;
   }
   setStatus(handoff.received

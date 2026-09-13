@@ -32,7 +32,7 @@ def focus(ui):
     ui.check('copy and download are in the one control row', ui.js("(() => { const r=document.querySelector('.controls'); return r.contains(document.getElementById('copyBtn')) && r.contains(document.getElementById('downloadBtn')); })()"))
     ui.check('Clear is an occasional action inside Preferences', ui.js("document.getElementById('prefsPanel').contains(document.getElementById('clearBtn'))"))
     ui.check('download is named explicitly', ui.js("document.getElementById('downloadBtn').getAttribute('aria-label') === 'Download transcript'"))
-    ui.check('word count is visible and compact', ui.js("(() => { const r=document.getElementById('wordCount').getBoundingClientRect(); return r.height>=10 && r.height<=18; })()"))
+    ui.check('no title bar or footer bar', ui.js("!document.querySelector('header.bar') && !document.querySelector('footer.footer')"))
     ui.fixture(3)
     ui.capture_store()
     # The fixture restores a stopped store. Enable the control only to exercise

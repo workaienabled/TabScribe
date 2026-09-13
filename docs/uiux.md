@@ -88,6 +88,49 @@ together, so the meaning never rests on colour alone. Only `needs-permission` is
 actionable — pressing it opens `mic-permission.html`, the one surface that can
 raise Chrome's prompt. The others are status, and are disabled.
 
+## The unsaved-work warning, and why it is not the safety net
+
+Chrome's own "You have unsaved progress" dialog, from `beforeunload`. It fires in
+the **pop-out window**. It does **not** fire when the side panel is dismissed, or
+when the browser is closed with the panel open.
+
+An earlier version of this document claimed it worked in the side panel too. That
+was wrong, and the way it was wrong is worth recording: the spike measured
+`beforeunload` on **navigation** — `Page.navigate` blocked by a dialog — and that
+result was generalised to dismissal, which is a different event. The same spike
+also reported `panel_closed_without_dialog: true` and that was dismissed as a CDP
+artifact. It was the real signal. Real-world use settled it.
+
+So the warning is kept for the window, where it genuinely works, but it is not
+what protects the transcript. **The transcript is persisted continuously** into
+`chrome.storage.session` and restored when the panel next opens: closing the
+panel cannot lose a meeting whether or not Chrome ever shows a prompt.
+`storage.session` is deliberate — it survives a panel close and a reopen, and is
+discarded when the browser exits, so a transcript is never written to disk
+behind the user's back.
+
+`probe/bare_shell_test.py` asserts the restore against a genuinely destroyed
+document rather than trusting the write.
+
+## The bare shell
+
+The title bar and the footer bar are gone; the panel is the toolbar row and the
+transcript. Two things that lived in those bars still matter, so they moved
+rather than vanishing:
+
+- **Cloud recognition** used to be a badge in the title bar. It is now its own
+  line above the transcript, because "this tab's audio is sent to Google" is the
+  one piece of status a user must not miss.
+- **Which tab is being captured** moved into the Record control's tooltip, and
+  the recording dot now rides in the control row — shown only while something is
+  happening, since an always-grey dot beside an idle button is noise.
+- **The unsaved marker** moved onto the Download control itself, which is where
+  the user would act on it. The visible word count is simply gone; it was never
+  part of copying a passage or saving the file.
+
+The pop-out keeps **icon and text**. It is the one control worth naming in place:
+moving to a window is a decision, not a frequent action.
+
 ## Deliberate limits
 
 No Find, transcript library, built-in AI, recording upload, automatic cloud
