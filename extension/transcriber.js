@@ -107,6 +107,21 @@ export class TranscriptStore {
     this.epoch = (Number(snapshot.epoch) || 0) + 1;
   }
 
+  /** Recover cleared history without changing current recognition keys or epoch. */
+  prepend(snapshot) {
+    if (!snapshot || !Array.isArray(snapshot.segments)) return;
+    const recovered = [];
+    for (const [index, source] of snapshot.segments.entries()) {
+      if (!source?.text?.trim()) continue;
+      let key = `recovered:${index}`;
+      while (this.byKey.has(key)) key = `_${key}`;
+      const segment = { ...source, key, isFinal: true };
+      recovered.push(segment);
+      this.byKey.set(key, segment);
+    }
+    this.segments = [...recovered, ...this.segments];
+  }
+
   /** Plain text, one line per segment when timestamps are on, otherwise flowed. */
   toText({ timestamps = false } = {}) {
     const segs = this.liveSegments();
@@ -308,12 +323,13 @@ export class Transcriber {
 
     this.track = track;
     this.options = { lang, processLocally };
+    // Every recognizer instance starts result indices at zero. A manual Start
+    // after Stop must get fresh keys too, or it overwrites the previous session.
+    this.store.newEpoch();
     if (!isRestart) {
       this.t0 = Date.now();
       this.restarts = 0;
       this.stopping = false;
-    } else {
-      this.store.newEpoch();
     }
 
     const rec = new SR();

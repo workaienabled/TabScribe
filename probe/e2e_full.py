@@ -387,6 +387,21 @@ def main():
         checks.add("clipboard text matches the spoken audio", clip_scored["wer"] <= WER_THRESHOLD,
                    f"WER={clip_scored['wer']:.3f} accuracy={clip_scored['accuracy_pct']}%")
 
+        if os.environ.get('TABSCRIBE_RESUME_CHECK') == '1':
+            # Repeat the known audio after a normal Stop/Start. Recognition result
+            # indices restart at zero, but prior transcript text must not change.
+            chrome.evaluate(panel_sid, "document.getElementById('startBtn').click()", await_promise=False)
+            chrome.wait_for_js(panel_sid, "document.getElementById('dot').dataset.state === 'listening'", timeout=30)
+            chrome.evaluate(page_sid, "(() => { const a=document.getElementById('audio'); a.currentTime=0; return a.play(); })()")
+            chrome.wait_for_js(page_sid, "document.getElementById('audio').ended", timeout=75)
+            chrome.evaluate(panel_sid, "document.getElementById('stopBtn').click()", await_promise=False)
+            chrome.wait_for_js(panel_sid, "!document.getElementById('startBtn').disabled", timeout=30)
+            resumed = chrome.evaluate(panel_sid, "Array.from(document.querySelectorAll('#transcript .seg')).map(e => e.innerText.trim()).join(' ')") or ''
+            checks.add('Stop/Start retains the first transcript verbatim', resumed.startswith(transcript), resumed)
+            doubled = report(REFERENCE + ' ' + REFERENCE, resumed)
+            checks.add('Stop/Start appends the second known script', doubled['wer'] <= WER_THRESHOLD,
+                       f"WER={doubled['wer']:.3f} accuracy={doubled['accuracy_pct']}%")
+
         chrome.evaluate(panel_sid, "document.getElementById('clearBtn').click()", await_promise=False)
         time.sleep(0.4)
         after = chrome.evaluate(panel_sid, "document.getElementById('wordCount').textContent",

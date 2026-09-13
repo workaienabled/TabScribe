@@ -25,6 +25,9 @@ const el = {
   copy: document.getElementById('copyBtn'),
   download: document.getElementById('downloadBtn'),
   clear: document.getElementById('clearBtn'),
+  undoBar: document.getElementById('undoBar'),
+  undoClear: document.getElementById('undoClearBtn'),
+  undoDismiss: document.getElementById('undoDismiss'),
   popout: document.getElementById('popoutBtn'),
   lang: document.getElementById('langSel'),
   localOnly: document.getElementById('localOnly'),
@@ -33,9 +36,13 @@ const el = {
   selectToCopy: document.getElementById('selectToCopy'),
   copyToast: document.getElementById('copyToast'),
   prefsBtn: document.getElementById('prefsBtn'),
+  theme: document.getElementById('themeSel'),
+  fontSize: document.getElementById('fontSizeSel'),
+  modeSummary: document.getElementById('modeSummary'),
   prefsPanel: document.getElementById('prefsPanel'),
   toast: document.getElementById('toast'),
   transcript: document.getElementById('transcript'),
+  jumpLatest: document.getElementById('jumpLatestBtn'),
   empty: document.getElementById('emptyHint'),
   status: document.getElementById('status'),
   dot: document.getElementById('dot'),
@@ -149,6 +156,17 @@ function setStatus(text, isError = false) {
 
 function setState(state) {
   el.dot.dataset.state = state;
+  updateModeSummary();
+}
+
+function updateModeSummary() {
+  const active = !!transcriber?.running;
+  const local = active ? transcriber.options.processLocally : el.localOnly.checked;
+  const lang = active ? transcriber.options.lang : el.lang.value;
+  el.modeSummary.textContent = local ? 'On-device' : 'Cloud';
+  el.modeSummary.classList.toggle('cloud', !local);
+  el.modeSummary.hidden = local;
+  el.modeSummary.title = `${langName(lang)} · ${local ? 'Recognition stays on this device' : 'Audio is sent to Google for recognition'}${active ? ' · Current session' : ' · Next session'}`;
 }
 
 /* ---------------------------------------------------------------- selection */
@@ -178,6 +196,28 @@ function selectionIntersects(sel, node) {
 const nodes = new Map();
 let lastStore = null;
 let heldUpdates = false;
+let following = true;
+
+function nearLatest() {
+  return el.transcript.scrollHeight - el.transcript.scrollTop - el.transcript.clientHeight < 48;
+}
+
+function refreshJumpButton() {
+  el.jumpLatest.hidden = !lastStore || lastStore.isEmpty() || nearLatest();
+}
+
+el.transcript.addEventListener('scroll', () => {
+  following = nearLatest();
+  refreshJumpButton();
+}, { passive: true });
+el.jumpLatest.addEventListener('click', () => {
+  // An explicit jump may release a selection; incoming text never does.
+  if (transcriptSelection()) window.getSelection().removeAllRanges();
+  following = true;
+  el.transcript.scrollTop = el.transcript.scrollHeight;
+  refreshJumpButton();
+  el.transcript.focus({preventScroll: true});
+});
 
 function makeRow(key) {
   const row = document.createElement('div');
@@ -224,6 +264,7 @@ function render(store) {
 
   el.empty.style.display = segs.length === 0 ? '' : 'none';
   el.words.textContent = `${store.wordCount()} words`;
+  el.copy.disabled = el.download.disabled = el.clear.disabled = store.isEmpty();
 
   const showTs = el.timestamps.checked;
   const sel = transcriptSelection();
@@ -251,15 +292,18 @@ function render(store) {
   el.transcript.classList.toggle('holding', !!sel);
 
   // Autoscrolling while the user is dragging moves the text under the cursor.
-  if (el.autoscroll.checked && !sel) {
+  if (el.autoscroll.checked && following && !sel) {
     el.transcript.scrollTop = el.transcript.scrollHeight;
   }
+  refreshJumpButton();
 }
 
 function refreshSelectionUi() {
   const sel = transcriptSelection();
   const selecting = !!sel;
-  el.copy.textContent = selecting ? 'Copy selection' : 'Copy';
+  el.copy.textContent = selecting ? 'Copy selection' : 'Copy all';
+  if (selecting) el.copy.removeAttribute('aria-describedby');
+  else el.copy.setAttribute('aria-describedby', 'wordCount');
   el.transcript.classList.toggle('holding', selecting);
 
   // Selection gone: apply whatever was held back while it existed.
@@ -482,8 +526,16 @@ async function retryModel() {
 
 /* ---------------------------------------------------------------- preferences */
 
+function applyReadingPrefs(p) {
+  el.theme.value = ['system', 'light', 'dark'].includes(p.theme) ? p.theme : 'system';
+  el.fontSize.value = String([13, 15, 17].includes(p.fontSize) ? p.fontSize : 13);
+  document.documentElement.dataset.theme = el.theme.value;
+  document.documentElement.style.setProperty('--reading-size', `${el.fontSize.value}px`);
+}
+
 /** Push stored values onto the controls. Call BEFORE anything reads them. */
 function applyPrefs(p) {
+  applyReadingPrefs(p);
   el.lang.value = p.lang;
   el.localOnly.checked = p.localOnly;
   el.timestamps.checked = p.timestamps;
@@ -491,6 +543,7 @@ function applyPrefs(p) {
   el.selectToCopy.checked = p.selectToCopy;
   el.copyToast.checked = p.copyToast;
   setPrefsOpen(p.prefsOpen, { save: false });
+  updateModeSummary();
 }
 
 /** Show or hide the preferences group. */
@@ -502,6 +555,7 @@ function setPrefsOpen(open, { save = true } = {}) {
 
 /** Persist whatever the controls currently say. */
 function savePrefsFromUi() {
+  updateModeSummary();
   return prefs.set({
     lang: el.lang.value,
     localOnly: el.localOnly.checked,
@@ -516,6 +570,7 @@ function savePrefsFromUi() {
 // store. Without this, changing a toggle in one and then in the other would
 // clobber the first change.
 prefs.onChange((diff) => {
+  if (diff.theme !== undefined || diff.fontSize !== undefined) applyReadingPrefs(prefs.get());
   if (diff.lang !== undefined) el.lang.value = diff.lang;
   if (diff.localOnly !== undefined) el.localOnly.checked = diff.localOnly;
   if (diff.timestamps !== undefined) {
@@ -526,6 +581,7 @@ prefs.onChange((diff) => {
   if (diff.selectToCopy !== undefined) el.selectToCopy.checked = diff.selectToCopy;
   if (diff.copyToast !== undefined) el.copyToast.checked = diff.copyToast;
   if (diff.prefsOpen !== undefined) setPrefsOpen(diff.prefsOpen, { save: false });
+  updateModeSummary();
 });
 
 /* ------------------------------------------------------------------ pop-out */
@@ -732,7 +788,7 @@ async function stop() {
   }
   // The capture stays armed so Start works again without another toolbar click.
   setState('idle');
-  setStatus('Stopped. Transcript kept — use Copy or Save.');
+  setStatus('Stopped. Transcript kept — use Copy or Download.');
   el.start.disabled = false;
 }
 
@@ -785,16 +841,6 @@ async function writeClipboard(text) {
   }
 }
 
-function flash(button, label) {
-  const original = button.dataset.label || button.textContent;
-  button.dataset.label = original;
-  button.textContent = label;
-  setTimeout(() => {
-    button.textContent = transcriptSelection() ? 'Copy selection' : 'Copy';
-    delete button.dataset.label;
-  }, 1200);
-}
-
 async function copy() {
   // A selection means "copy this part" — that is the whole point of being able to
   // select. With nothing selected, fall back to the entire transcript.
@@ -811,11 +857,7 @@ async function copy() {
     return;
   }
 
-  const words = text.split(/\s+/).filter(Boolean).length;
-  flash(el.copy, 'Copied');
-  setStatus(selected
-    ? `Copied selection (${words} words).`
-    : `Copied whole transcript (${words} words).`);
+  showToast('Copied');
 }
 
 function download() {
@@ -831,14 +873,42 @@ function download() {
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
+// Only the most recent Clear is recoverable, in this view's memory. It is never
+// persisted to disk, and remains available until used, dismissed, or replaced.
+let clearedSnapshot = null;
+
+function undoClear() {
+  if (!clearedSnapshot || !transcriber) return;
+  transcriber.store.prepend(clearedSnapshot);
+  clearedSnapshot = null;
+  el.undoBar.hidden = true;
+  // Rebuild only for the explicit recovery action, never for live updates.
+  nodes.clear();
+  el.transcript.replaceChildren(el.empty);
+  following = false;
+  render(transcriber.store);
+  el.transcript.scrollTop = 0;
+  el.transcript.focus({preventScroll: true});
+}
+
 function clear() {
+  // The occasional action lives in Preferences; reveal its result and Undo.
+  setPrefsOpen(false);
+  el.transcript.focus({preventScroll: true});
+  if (transcriber && !transcriber.store.isEmpty()) {
+    clearedSnapshot = transcriber.store.serialize();
+    el.undoBar.hidden = false;
+  }
   // Drop the DOM rows and their cached identities first, so nothing from the old
   // transcript can be reused when rendering resumes.
   nodes.clear();
   heldUpdates = false;
   el.transcript.replaceChildren(el.empty);
+  following = true;
+  el.jumpLatest.hidden = true;
   el.empty.style.display = '';
   el.words.textContent = '0 words';
+  el.copy.disabled = el.download.disabled = el.clear.disabled = true;
 
   // Clearing the store alone would leave the in-flight utterance alive inside the
   // recognition session, and it would reappear on the next event. reset() abandons
@@ -851,7 +921,7 @@ function clear() {
   const sel = window.getSelection();
   if (sel && el.transcript.contains(sel.anchorNode)) sel.removeAllRanges();
   el.transcript.classList.remove('holding');
-  el.copy.textContent = 'Copy';
+  refreshSelectionUi();
 
   setStatus(transcriber?.running
     ? 'Cleared. Still listening.'
@@ -863,11 +933,31 @@ el.stop.addEventListener('click', stop);
 el.copy.addEventListener('click', copy);
 el.download.addEventListener('click', download);
 el.clear.addEventListener('click', clear);
+el.undoClear.addEventListener('click', undoClear);
+el.undoDismiss.addEventListener('click', () => {
+  clearedSnapshot = null;
+  el.undoBar.hidden = true;
+  el.transcript.focus({preventScroll: true});
+});
 el.popout.addEventListener('click', popOut);
 el.useCloud.addEventListener('click', useCloudInstead);
 el.retryModel.addEventListener('click', retryModel);
 el.prefsBtn.addEventListener('click', () => {
   setPrefsOpen(el.prefsPanel.hidden);
+});
+for (const control of [el.theme, el.fontSize]) {
+  control.addEventListener('change', () => {
+    const values = {theme: el.theme.value, fontSize: Number(el.fontSize.value)};
+    applyReadingPrefs(values);
+    prefs.set(values);
+  });
+}
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !el.prefsPanel.hidden) {
+    setPrefsOpen(false);
+    el.prefsBtn.focus();
+    event.preventDefault();
+  }
 });
 el.copyToast.addEventListener('change', savePrefsFromUi);
 el.timestamps.addEventListener('change', () => {

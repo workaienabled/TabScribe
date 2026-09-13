@@ -1,15 +1,19 @@
 # Probes and end-to-end tests
 
 This directory holds the capability probes that decided TabScribe's design and the
-end-to-end suite that verifies it. Everything here runs against a real Chrome and
-real audio; nothing is mocked.
+tests that verify it. Audio suites use real Chrome recognition and known audio.
+`ux_test.py` and `focus_test.py` use explicit transcript fixtures in real Chrome;
+they test UI behavior, not speech accuracy. `recovery.test.mjs` is a store unit test.
+The current product scope is recorded in [`PRODUCT.md`](../PRODUCT.md).
 
 ## Running
 
 ```bash
-bash cleanup.sh                                     # free port 8899, kill stale test Chromes
-python3 -u e2e_full.py                              # 54-word business clip
-TABSCRIBE_CLIP=sample2.wav python3 -u e2e_full.py   # 75-word technical clip
+# Start a private Xvfb on :191 first. Never use the user's display or profile.
+DISPLAY=:191 python3 -u run_regressions.py          # all current Chrome suites, serially
+DISPLAY=:191 python3 -u focus_test.py               # real clipboard + downloaded files
+DISPLAY=:191 python3 -u e2e_full.py                 # 54-word business clip
+DISPLAY=:191 TABSCRIBE_CLIP=sample2.wav python3 -u e2e_full.py  # 75-word technical clip
 ```
 
 Exit code 0 means every check passed. Results are also written to `e2e_result.json`.
