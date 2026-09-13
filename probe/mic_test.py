@@ -102,7 +102,10 @@ def mic_flow(ui):
     })""")
     ui.check('the microphone option exists inside Preferences',
              state['exists'] and state['inPrefs'], state)
-    ui.check('the microphone is OFF by default', state['checked'] is False, state)
+    # On by default: a meeting transcript missing the user's own half is the
+    # surprising outcome. Isolation is what makes that safe, and every failure
+    # path is asserted in mic_permission_test.py.
+    ui.check('the microphone is ON by default', state['checked'] is True, state)
     ui.check('the option states that it affects the saved file only',
              'saved' in state['hint'].lower() or 'download' in state['hint'].lower(), state['hint'])
 
@@ -112,8 +115,9 @@ def mic_flow(ui):
     started = ui.js("""(async () => {
       const {MicTranscriber} = await import('./mic.js');
       window.__mic = new MicTranscriber();
-      const res = await window.__mic.start({lang: 'en-US', processLocally: true});
-      return res;
+      const opened = await MicTranscriber.requestStream();
+      if (!opened.ok) return opened;
+      return window.__mic.start(opened.stream, {lang: 'en-US', processLocally: true});
     })()""", await_promise=True)
     ui.check('the microphone starts against the fake device', started.get('ok') is True, started)
 
@@ -182,17 +186,16 @@ def mic_flow(ui):
       navigator.mediaDevices.getUserMedia = () => {
         const e = new Error('denied'); e.name = 'NotAllowedError'; return Promise.reject(e);
       };
-      const m = new MicTranscriber();
       let threw = null;
       let res = null;
-      try { res = await m.start({lang: 'en-US'}); } catch (e) { threw = String(e); }
+      try { res = await MicTranscriber.requestStream(); } catch (e) { threw = String(e); }
       navigator.mediaDevices.getUserMedia = real;
       return {threw, res};
     })()""", await_promise=True)
     ui.check('a refused microphone resolves instead of throwing',
              failure['threw'] is None and failure['res']['ok'] is False, failure)
     ui.check('a refused microphone is reported as denied',
-             failure['res'].get('denied') is True, failure['res'])
+             failure['res'].get('reason') == 'denied', failure['res'])
     after = ui.js("""({
       status: document.getElementById('status').textContent,
       isError: document.getElementById('status').classList.contains('error'),

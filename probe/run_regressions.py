@@ -19,6 +19,7 @@ CASES += [
     ('ux-robustness', ['robustness_test.py'], {}),
     ('ux-review', ['robustness_test.py', 'review'], {}),
     ('ux-mic', ['mic_test.py'], {}),
+    ('ux-mic-permission', ['mic_permission_test.py'], {}),
     ('prefs', ['prefs_test.py'], {}),
     ('popout', ['popout_test.py'], {}),
     ('e2e-sample1', ['e2e_full.py'], {}),

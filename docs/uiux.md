@@ -89,9 +89,65 @@ copy check no longer demands total silence on success.
 
 ## Microphone in the saved file
 
-Optional, off by default, and deliberately isolated in `extension/mic.js`. A
+Optional, on by default, and deliberately isolated in `extension/mic.js`. A
 second `SpeechRecognition` transcribes the microphone into its own store, merged
 into the download only. `probe/spike_mic.py` measured the premise first on Chrome
 151: two recognizers run concurrently and starting the second does not disturb
 the first. Ordering uses each segment's elapsed offset; both sides are labelled.
-Any failure disables the option and leaves the meeting transcript untouched.
+Any failure stops the microphone for that session and leaves the meeting
+transcript untouched.
+
+### The permission bug, and what it taught
+
+The first implementation announced "Microphone permission was refused" without
+ever prompting. Two independent faults, both measured rather than guessed:
+
+1. `audioCapture` **cannot** be an optional permission. `chrome.permissions
+   .request({permissions:['audioCapture']})` rejects with *"Only permissions
+   specified in the manifest may be requested"* (`probe/spike_permission.py`). It
+   is now a required manifest permission.
+2. The `catch` around that rejection treated it as success and fell through to
+   `getUserMedia`. In a side panel with **no live user gesture**, Chrome rejects
+   that with `NotAllowedError` and **shows no prompt at all** — so the extension
+   reported a refusal the user was never allowed to make.
+
+The fix is structural. `start({gesture})` takes the caller's word for whether a
+live user activation exists, and the microphone is requested **synchronously**
+as the first statement, before any `await`:
+
+```js
+const pendingMic = (gesture && armed && !micBlocked) ? requestMicStream() : null;
+```
+
+`gesture: true` is passed by exactly three callers, all of them real clicks: the
+Start button, and the two buttons inside the model notice. The pop-out resume and
+the re-arm after a hand-off run on load or programmatically, so they pass the
+default `false` and never ask — asking there produces the phantom refusal, since
+Chrome auto-denies without prompting. The `armed` term matters too: it means the
+microphone can never queue ahead of the tab-capture request the user came for.
+
+`classify()` names what actually failed (`denied`, `dismissed`, `no-device`,
+`device-busy`, `unsupported`, `failed`), and only a real denial says the
+microphone is blocked. There is deliberately no `no-gesture` reason: Chrome
+reports a gesture-less rejection as "Permission dismissed", indistinguishable
+from a real dismissal, which is why the gesture is guaranteed by the caller
+instead of detected after the fact.
+
+`MicTranscriber` owns the in-flight request, so unticking the option while the
+prompt is still open releases the stream that arrives afterwards instead of
+leaving the recording indicator lit. `start()` guards on `this.recognition`
+rather than `this.running`, because `running` is only set inside `onstart`, a
+task later — two rapid Starts would otherwise each build a graph and leak a
+microphone. The microphone shares the meeting's `t0`, so a microphone attached
+mid-session still sorts its lines where they were spoken.
+
+A failure no longer unticks the option. It sets a session-local `micBlocked` flag
+so Start stops re-prompting, while the user's stored preference survives;
+re-ticking the box clears it and retries immediately, using the tick as the
+gesture.
+
+The first mic test passed against this bug because
+`--use-fake-ui-for-media-stream` auto-accepts prompts. `probe/mic_permission_test.py`
+deliberately runs without it, and `e2e_full.py` now runs the known-audio check in
+both modes: permission granted and permission denied both transcribe the meeting
+at **96.3%**, the same as with no microphone feature at all.

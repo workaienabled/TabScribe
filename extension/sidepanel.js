@@ -18,7 +18,7 @@
  */
 import { Transcriber, buildAudioGraph, formatClock } from './transcriber.js';
 import * as prefs from './prefs.js';
-import { MicTranscriber, mergeTranscripts } from './mic.js';
+import { MicTranscriber, mergeTranscripts, MIC_MESSAGES, stopStream } from './mic.js';
 
 const el = {
   start: document.getElementById('startBtn'),
@@ -88,9 +88,13 @@ if (IS_WINDOW) {
 }
 
 let transcriber = null;
-// Optional, off by default, and deliberately isolated: see mic.js. Created lazily
-// so that a user who never enables it pays nothing for it existing.
+// Optional (on by default) and deliberately isolated: see mic.js. Constructed on
+// the first Start that requests a stream, so the instance can own the in-flight
+// request and release it if the user changes their mind.
 let mic = null;
+// Set when the microphone failed this session, so Start does not re-prompt on
+// every press. Cleared when the user toggles the option or reloads the panel.
+let micBlocked = false;
 let graph = null;
 let stream = null;
 let targetTabId = null;
@@ -539,12 +543,13 @@ async function useCloudInstead() {
   savePrefsFromUi();
   hideModelPanel();
   setStatus('Switched to Chrome\'s cloud recognition. Audio is sent to Google.');
-  if (!el.start.disabled) await start();
+  // Reached from the notice's own button, so the activation is still live.
+  if (!el.start.disabled) await start({ gesture: true });
 }
 
 async function retryModel() {
   el.retryModel.hidden = true;
-  if (!el.start.disabled) await start();
+  if (!el.start.disabled) await start({ gesture: true });
 }
 
 /* ---------------------------------------------------------------- preferences */
@@ -605,7 +610,16 @@ prefs.onChange((diff) => {
   if (diff.autoscroll !== undefined) el.autoscroll.checked = diff.autoscroll;
   if (diff.selectToCopy !== undefined) el.selectToCopy.checked = diff.selectToCopy;
   if (diff.copyToast !== undefined) el.copyToast.checked = diff.copyToast;
-  if (diff.includeMic !== undefined) el.includeMic.checked = diff.includeMic;
+  if (diff.includeMic !== undefined) {
+    el.includeMic.checked = diff.includeMic;
+    // Both documents can be alive at once (sidePanel.close() is allowed to
+    // fail), so turning the microphone off in one view must release it here too
+    // rather than leaving the other document quietly recording.
+    if (!diff.includeMic && mic) {
+      mic.stop({ flushMs: 0 });
+      setMicHint('Microphone off. Your own speech will not be added to the saved file.', false);
+    }
+  }
   if (diff.prefsOpen !== undefined) setPrefsOpen(diff.prefsOpen, { save: false });
   updateModeSummary();
 });
@@ -754,8 +768,23 @@ async function refreshTarget() {
   }
 }
 
-async function start() {
+/**
+ * Begin transcribing.
+ *
+ * `gesture` says whether a live user activation is available. It is TRUE only
+ * for the Start button's own click handler. Every programmatic caller — the
+ * pop-out resume, the re-arm after a hand-off — passes false, because a
+ * microphone request without a gesture is auto-denied with no prompt shown, and
+ * reporting that as a refusal is the bug this whole path exists to avoid.
+ */
+async function start({ gesture = false } = {}) {
   el.start.disabled = true;
+  // FIRST, synchronously: the user's click is a live gesture right now, and
+  // getUserMedia in a side panel is refused without one — with no prompt shown.
+  // Everything below this line awaits, which would destroy the gesture.
+  // Only ask when capture is already armed, so the microphone can never queue
+  // ahead of the tab-capture request the user actually came for.
+  const pendingMic = (gesture && armed && !micBlocked) ? requestMicStream() : null;
   setState('starting');
   setStatus('Preparing…');
 
@@ -814,10 +843,14 @@ async function start() {
     // Strictly after the meeting transcription is live, and never awaited into
     // its failure path: the microphone is a bonus for the saved file and must
     // not be able to break, delay, or fail the thing the user actually asked for.
-    startMicIfEnabled(lang, localOnly);
+    attachMic(pendingMic, lang, localOnly);
   } catch (e) {
     setState('error');
     setStatus(String(e && e.message ? e.message : e), true);
+    // The meeting failed to start, so release a microphone opened for it.
+    if (pendingMic) {
+      pendingMic.then((r) => stopStream(r && r.stream)).catch(() => {});
+    }
     // The recognizer may already be running against the graph teardown is about
     // to destroy (transcriber.start() succeeded, then something after it threw).
     // Leaving it attached to a dead track produces an endless restart loop that
@@ -891,39 +924,65 @@ if (!IS_WINDOW) {
 /* ------------------------------------------------------------- microphone */
 
 /**
- * Start microphone capture if the user opted in. Fire-and-forget by design.
+ * Open the microphone, synchronously, while the Start click's gesture is live.
  *
- * Every failure mode ends the same way: the checkbox goes back off, the hint
- * explains why, and the meeting transcription carries on untouched. Nothing in
- * here is awaited by start(), so a permission prompt cannot stall Start either.
+ * This MUST NOT be awaited before it is called. Measured on Chrome 151: a side
+ * panel calling getUserMedia without a live user gesture is rejected with
+ * NotAllowedError and no prompt is ever shown — which is why the panel used to
+ * announce a refusal the user was never given the chance to make.
+ *
+ * Returns a promise for the stream request, or null when the option is off.
+ * Never throws, so it cannot interfere with arming tab capture.
  */
-async function startMicIfEnabled(lang, processLocally) {
-  if (!el.includeMic.checked) return;
+function requestMicStream() {
+  if (!el.includeMic.checked) return null;
   try {
-    if (!mic) mic = new MicTranscriber();
-    if (mic.running) return;
+    // Ownership matters: the instance tracks the in-flight request so turning
+    // the option off while the prompt is open releases whatever arrives later.
+    if (!mic) mic = new MicTranscriber({ onStateChange: onMicState });
+    return mic.open();
+  } catch (e) {
+    return Promise.resolve({ ok: false, reason: 'failed',
+                             error: String(e && e.message ? e.message : e) });
+  }
+}
 
-    // Ask for the optional permission only when the feature is actually used.
-    let granted = true;
-    try {
-      granted = await chrome.permissions.request({ permissions: ['audioCapture'] });
-    } catch (e) {
-      // Some builds resolve audioCapture through getUserMedia alone; let the
-      // real capture attempt below be the decider rather than failing here.
-      granted = true;
-    }
-    if (!granted) { disableMic('Microphone permission was refused.'); return; }
+/**
+ * Attach an already-open microphone stream to its own recognizer.
+ *
+ * Called after the meeting transcription is already live, so any failure here
+ * is reported where the control lives and changes nothing else.
+ */
+async function attachMic(pending, lang, processLocally) {
+  if (!pending) return;
+  let res;
+  try {
+    res = await pending;
+  } catch (e) {
+    disableMic('failed', String(e && e.message ? e.message : e));
+    return;
+  }
+  // 'cancelled' is the user's own doing, not a failure to report.
+  if (!res.ok) {
+    if (res.reason !== 'cancelled') disableMic(res.reason, res.error);
+    return;
+  }
+  if (!el.includeMic.checked) { stopStream(res.stream); return; }
 
-    const res = await mic.start({ lang, processLocally });
-    if (!res.ok) {
-      disableMic(res.denied
-        ? 'Microphone permission was refused. Your own speech will not be saved.'
-        : `Microphone unavailable: ${res.error}`);
-      return;
-    }
+  try {
+    if (!mic) mic = new MicTranscriber({ onStateChange: onMicState });
+    if (mic.running) { stopStream(res.stream); return; }
+    const started = await mic.start(res.stream, {
+      lang,
+      processLocally,
+      // The meeting's clock, so merged turns land where they were spoken.
+      t0: transcriber?.t0 || 0,
+    });
+    if (!started.ok) { disableMic(started.reason, started.error); return; }
     setMicHint('Your microphone is being transcribed into the saved file only.', false);
   } catch (e) {
-    disableMic(`Microphone unavailable: ${e && e.message ? e.message : e}`);
+    stopStream(res.stream);
+    disableMic('failed', String(e && e.message ? e.message : e));
   }
 }
 
@@ -933,15 +992,35 @@ function setMicHint(text, denied) {
 }
 
 /**
- * Turn the feature off after a failure and say so where the control lives.
- * The status line is reserved for the meeting transcription; a microphone
- * problem must not read like a recognition failure.
+ * The microphone died on its own — permission revoked mid-session, device
+ * unplugged, recognizer gave up. Without this the panel keeps claiming the
+ * microphone is being transcribed when it no longer is.
  */
-function disableMic(reason) {
-  el.includeMic.checked = false;
-  savePrefsFromUi();
-  setMicHint(`${reason} The meeting transcript is unaffected.`, true);
-  if (el.prefsPanel.hidden) setPrefsOpen(true);
+function onMicState(state) {
+  if (state.running) return;
+  if (state.error) { disableMic('failed', state.error); return; }
+  // A clean stop while the option is still on: do not leave the success wording
+  // standing, since nothing is being captured any more.
+  if (el.includeMic.checked && !el.micHint.classList.contains('denied')
+      && /being transcribed/.test(el.micHint.textContent)) {
+    setMicHint('The microphone stopped. Your own speech is no longer being added.', false);
+  }
+}
+
+/**
+ * Report a microphone failure where the control lives, and stop retrying it.
+ *
+ * The status line is reserved for the meeting transcription; a microphone
+ * problem must never read like a recognition failure. The checkbox is left ON:
+ * the user asked for this, and a transient problem (device busy, prompt
+ * dismissed) should not silently revoke the setting for every future meeting.
+ * Only this session stops trying, via micBlocked.
+ */
+function disableMic(reason, detail) {
+  micBlocked = true;
+  const message = MIC_MESSAGES[reason] || MIC_MESSAGES.failed;
+  setMicHint(`${message} The meeting transcript is unaffected.`, true);
+  if (detail) console.warn('TabScribe microphone:', reason, detail);
 }
 
 /** The saved text: meeting only, or meeting merged with the user's own speech. */
@@ -1099,7 +1178,10 @@ function clear() {
     : 'Cleared.');
 }
 
-el.start.addEventListener('click', start);
+// The ONLY caller with a live user activation, and so the only one that may ask
+// for the microphone. Wrapped rather than passed directly: the click event
+// object would otherwise arrive as the options argument.
+el.start.addEventListener('click', () => start({ gesture: true }));
 el.stop.addEventListener('click', stop);
 el.copy.addEventListener('click', copy);
 el.download.addEventListener('click', download);
@@ -1139,9 +1221,15 @@ el.autoscroll.addEventListener('change', savePrefsFromUi);
 el.includeMic.addEventListener('change', () => {
   savePrefsFromUi();
   if (el.includeMic.checked) {
+    // A deliberate re-tick is the user asking to try again.
+    micBlocked = false;
     setMicHint('Your own speech is added to the downloaded transcript only — never shown live. Needs microphone permission.', false);
-    // Turning it on mid-meeting should take effect now, not at the next Start.
-    if (transcriber?.running) startMicIfEnabled(el.lang.value, el.localOnly.checked);
+    // Mid-meeting the Start gesture is long gone, so the microphone cannot be
+    // opened without a prompt Chrome will refuse to show. Ticking the box IS a
+    // gesture, so the request is made right here, synchronously.
+    if (transcriber?.running && !mic?.running) {
+      attachMic(requestMicStream(), el.lang.value, el.localOnly.checked);
+    }
   } else if (mic) {
     // Turning it off releases the microphone immediately. Text already captured
     // is kept: the user may re-enable before saving, and silently discarding it
@@ -1233,7 +1321,14 @@ async function previewModelState() {
   if (handoff.resume) {
     // The side panel was transcribing when the user popped out; pick up where it
     // left off rather than making them press Start again.
+    //
+    // No gesture here: this runs on document load, so the microphone cannot be
+    // requested (Chrome auto-denies without prompting). The meeting transcript
+    // resumes normally; the microphone picks up when the user next acts.
     await start();
+    if (el.includeMic.checked && !mic?.running) {
+      setMicHint('Press Stop and Start in this window to include your microphone.', false);
+    }
     return;
   }
   setStatus(handoff.received

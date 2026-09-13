@@ -32,11 +32,60 @@ import { TranscriptStore, buildAudioGraph, getSpeechRecognition, formatClock } f
 export const MIC_LABEL = 'You';
 export const TAB_LABEL = 'Meeting';
 
+/**
+ * Name what actually went wrong, so the UI never invents a refusal.
+ *
+ * The distinction matters: "dismissed" means the user closed the prompt without
+ * choosing, which is not the same as "denied", and neither is the same as having
+ * no microphone attached. Saying "you refused" when the user was never asked is
+ * the specific lie this replaces.
+ */
+export function classify(error) {
+  const name = String(error && error.name ? error.name : '');
+  const message = String(error && error.message ? error.message : error || '');
+  if (name === 'NotAllowedError') {
+    // Chrome reuses this one error for several situations. Measured on Chrome
+    // 151: a request with no live user gesture also arrives as "Permission
+    // dismissed", so it is deliberately not distinguished here — the gesture is
+    // guaranteed by the caller instead (see sidepanel.js start({gesture})).
+    if (/dismiss/i.test(message)) return 'dismissed';
+    return 'denied';
+  }
+  if (name === 'SecurityError') return 'denied';
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'no-device';
+  if (name === 'NotReadableError' || name === 'AbortError') return 'device-busy';
+  return 'failed';
+}
+
+/** Release a stream without ever throwing. */
+export function stopStream(stream) {
+  if (!stream) return;
+  for (const track of stream.getTracks()) {
+    try { track.stop(); } catch (e) { /* best effort */ }
+  }
+}
+
+/** What to tell the user for each failure, in their terms. */
+export const MIC_MESSAGES = {
+  denied: 'Chrome is blocking the microphone for this extension. Allow it from the '
+        + 'address-bar camera icon, or in Settings → Privacy → Site settings → Microphone.',
+  dismissed: 'The microphone request was dismissed, so your own speech is not being saved.',
+  'no-device': 'No microphone was found, so only the meeting audio is being saved.',
+  'device-busy': 'The microphone is in use by another app, so only the meeting audio is being saved.',
+  unsupported: 'This browser cannot transcribe the microphone.',
+  failed: 'The microphone could not be started, so only the meeting audio is being saved.',
+};
+
 export class MicTranscriber {
   constructor({ onStateChange = () => {} } = {}) {
     this.store = new TranscriptStore();
     this.onStateChange = onStateChange;
     this.stream = null;
+    // A getUserMedia call that has not resolved yet. Tracked so that stopping
+    // the microphone while a permission prompt is still open releases whatever
+    // arrives afterwards, instead of leaving the recording indicator lit.
+    this.pendingStream = null;
+    this.discarded = false;
     this.graph = null;
     this.recognition = null;
     this.running = false;
@@ -60,48 +109,107 @@ export class MicTranscriber {
   }
 
   /**
-   * Begin transcribing the microphone.
+   * Open the microphone. MUST be called synchronously from a user gesture.
    *
-   * Resolves to {ok} or {ok:false, error, denied}. It never rejects: the caller
+   * Measured on Chrome 151 (probe/spike_permission.py): in a side panel with no
+   * live user gesture, getUserMedia is rejected with NotAllowedError and NO
+   * prompt is ever shown. Awaiting anything before this call silently converts
+   * "ask the user" into "refuse the user", which is exactly the bug this fixes.
+   * So the caller grabs the stream first, then does its async work.
+   *
+   * Resolves to {ok, stream} or {ok:false, reason, error}. Never rejects.
+   */
+  static requestStream() {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        return Promise.resolve({ ok: false, reason: 'unsupported',
+                                 error: 'This browser exposes no microphone API.' });
+      }
+      // Echo cancellation matters here: the tab's audio is playing through the
+      // speakers, and without it the meeting's voices are picked up twice.
+      return navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      }).then(
+        (stream) => ({ ok: true, stream }),
+        (e) => ({ ok: false, reason: classify(e), error: String(e && e.message ? e.message : e) }),
+      );
+    } catch (e) {
+      return Promise.resolve({ ok: false, reason: classify(e),
+                               error: String(e && e.message ? e.message : e) });
+    }
+  }
+
+  /**
+   * Open the microphone and keep ownership of the in-flight request.
+   *
+   * Instance method so that stop() can release a stream that arrives after the
+   * user has already changed their mind: the prompt is answered by a human and
+   * can stay open for as long as they like.
+   */
+  open() {
+    this.discarded = false;
+    return MicTranscriber.requestStream().then((res) => {
+      if (res.ok && this.discarded) {
+        stopStream(res.stream);
+        return { ok: false, reason: 'cancelled', error: 'Cancelled before it started.' };
+      }
+      if (res.ok) this.pendingStream = res.stream;
+      return res;
+    });
+  }
+
+  /**
+   * Begin transcribing an already-open microphone stream.
+   *
+   * Resolves to {ok} or {ok:false, reason, error}. It never rejects: the caller
    * is in the middle of starting the real transcription and a microphone problem
    * must not become a tab-capture failure.
    */
-  async start({ lang = 'en-US', processLocally = true } = {}) {
-    if (this.running) return { ok: true };
+  async start(stream, { lang = 'en-US', processLocally = true, t0 = 0 } = {}) {
+    if (this.discarded) {
+      // Turned off while the prompt was open; do not open a live microphone now.
+      stopStream(stream);
+      this.pendingStream = null;
+      return { ok: false, reason: 'cancelled', error: 'Cancelled before it started.' };
+    }
+    this.pendingStream = null;
+    // this.running only becomes true inside rec.onstart, which fires in a later
+    // task, so it cannot guard against a second start() in the same tick. The
+    // recognizer is assigned synchronously by _attach(), so test that instead —
+    // otherwise two calls each build a graph and leak a live microphone.
+    if (this.running || this.recognition) {
+      stopStream(stream);
+      return { ok: true };
+    }
     this.options = { lang, processLocally };
     this.lastError = null;
     this.stopping = false;
 
     try {
       const SR = getSpeechRecognition();
-      if (!SR) return { ok: false, error: 'Speech recognition is unavailable.' };
-
-      // Echo cancellation matters here: the tab's audio is playing through the
-      // speakers, and without it the meeting's voices are picked up twice.
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
-      if (!this.stream.getAudioTracks().length) {
+      if (!SR) {
+        stopStream(stream);
+        return { ok: false, reason: 'unsupported', error: 'Speech recognition is unavailable.' };
+      }
+      this.stream = stream;
+      if (!stream || !stream.getAudioTracks().length) {
         throw new Error('The microphone produced no audio track.');
       }
 
       // monitor:false — recognition only. Playing the mic back would echo.
       this.graph = buildAudioGraph(this.stream, { monitor: false });
-      this.t0 = Date.now();
+      // Share the meeting's clock origin. Without it a microphone attached late
+      // (mid-session re-tick) times its first line from ITS start, which sorts
+      // the user's turns to the top of the merged file instead of where they
+      // were actually spoken.
+      this.t0 = t0 || Date.now();
       this.store.newEpoch();
       this._attach(SR, this.graph.track);
       return { ok: true };
     } catch (e) {
-      const name = String(e && e.name ? e.name : '');
-      const denied = name === 'NotAllowedError' || name === 'SecurityError';
       await this.stop({ flushMs: 0 });
-      return {
-        ok: false,
-        denied,
-        error: denied
-          ? 'Microphone permission was refused.'
-          : String(e && e.message ? e.message : e),
-      };
+      return { ok: false, reason: classify(e),
+               error: String(e && e.message ? e.message : e) };
     }
   }
 
@@ -171,6 +279,15 @@ export class MicTranscriber {
 
   /** Stop recognition and release the microphone. Never throws. */
   async stop({ flushMs = 800 } = {}) {
+    // Any request still in flight must not come back and open a live microphone.
+    this.discarded = true;
+    // Release before any await: otherwise a stop() that is still awaiting the
+    // graph teardown can come back and stop a stream a LATER open() acquired,
+    // leaving a dead microphone the UI believes is working.
+    if (this.pendingStream) {
+      stopStream(this.pendingStream);
+      this.pendingStream = null;
+    }
     this.stopping = true;
     if (this.running && flushMs > 0) {
       await new Promise((r) => setTimeout(r, flushMs));

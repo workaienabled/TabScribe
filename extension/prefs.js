@@ -38,9 +38,11 @@ export const DEFAULTS = {
   prefsOpen: false,
   theme: 'system',
   fontSize: 13,
-  // Transcribe the microphone into the SAVED file only. Off by default: it needs
-  // a permission prompt, and the product's core promise is the meeting's audio.
-  includeMic: false,
+  // Transcribe the microphone into the SAVED file only. On by default: a meeting
+  // transcript missing the user's own half is the surprising outcome. Chrome
+  // still asks for microphone access on first use, and every failure path leaves
+  // the meeting transcript untouched.
+  includeMic: true,
   windowWidth: 460,
   windowHeight: 780,
 };

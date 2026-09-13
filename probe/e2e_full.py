@@ -300,19 +300,55 @@ def main():
                 if model == "available":
                     break
                 time.sleep(2)
-            # Brief settle: availability flips before the first start() reliably
-            # attaches to the freshly registered pack.
-            time.sleep(3)
+            # Availability flips before the first start() reliably attaches to the
+            # freshly registered pack. A fixed sleep was not enough — observed
+            # intermittently as "recognition started — Stopped." and a 0% run. So
+            # prove the recognizer can actually hold a session before continuing:
+            # start one on a silent synthetic track and require it to stay running.
+            settled = False
+            for _ in range(12):
+                ok = chrome.evaluate(panel_sid, """(async () => {
+                  const SR = self.SpeechRecognition || self.webkitSpeechRecognition;
+                  const ctx = new AudioContext();
+                  const dest = ctx.createMediaStreamDestination();
+                  const osc = ctx.createOscillator();
+                  const gain = ctx.createGain();
+                  gain.gain.value = 0;
+                  osc.connect(gain); gain.connect(dest); osc.start();
+                  const rec = new SR();
+                  rec.lang = 'en-US'; rec.continuous = true;
+                  rec.interimResults = true; rec.processLocally = true;
+                  let ended = false, started = false;
+                  rec.onstart = () => { started = true; };
+                  rec.onend = () => { ended = true; };
+                  rec.onerror = () => {};
+                  try { rec.start(dest.stream.getAudioTracks()[0]); }
+                  catch (e) { await ctx.close(); return false; }
+                  await new Promise(r => setTimeout(r, 1500));
+                  const alive = started && !ended;
+                  try { rec.abort(); } catch (e) {}
+                  try { osc.stop(); } catch (e) {}
+                  await ctx.close();
+                  return alive;
+                })()""", await_promise=True)
+                if ok:
+                    settled = True
+                    break
+                time.sleep(2)
+            print(f"  recognizer settled: {settled}", flush=True)
         checks.add("on-device en-US model available", model == "available", f"availability={model}")
 
         print("\n=== RUN ===", flush=True)
         # Optional: prove the microphone side-channel cannot degrade the meeting
         # transcription it runs alongside. Same known audio, same WER threshold,
         # with the microphone feature switched on and a fake mic device feeding it.
+        # The microphone option is ON by default, so the default path already
+        # exercises it. TABSCRIBE_MIC_CHECK additionally grants the permission so
+        # the microphone genuinely opens alongside tab capture; without it the
+        # request is denied and the run proves the failure path instead. Both
+        # must reach the same transcript.
+        mic_mode = 'denied'
         if os.environ.get('TABSCRIBE_MIC_CHECK') == '1':
-            # Grant only to this extension origin, over CDP, so no global media
-            # switch is involved and tab capture is unaffected.
-            #
             # grantPermissions REPLACES the origin's whole grant set, so the
             # clipboard permissions the later checks depend on must be re-listed
             # here or reading the clipboard fails with NotAllowedError.
@@ -321,17 +357,14 @@ def main():
                             origin=f'chrome-extension://{ext_id}',
                             permissions=['audioCapture', 'clipboardReadWrite',
                                          'clipboardSanitizedWrite'])
+                mic_mode = 'granted'
             except Exception as e:  # noqa: BLE001
                 print(f"  (grantPermissions: {e})", flush=True)
-            chrome.evaluate(panel_sid, """(() => {
-              const box = document.getElementById('includeMic');
-              box.checked = true;
-              box.dispatchEvent(new Event('change'));
-            })()""", await_promise=False)
-            checks.add("microphone option enabled for the interference check",
-                       chrome.evaluate(panel_sid,
-                                       "document.getElementById('includeMic').checked",
-                                       await_promise=False))
+        checks.add("microphone option is on by default",
+                   chrome.evaluate(panel_sid,
+                                   "document.getElementById('includeMic').checked",
+                                   await_promise=False))
+        print(f"  microphone mode: {mic_mode}", flush=True)
         # Start recognition BEFORE playback. Pressing Start after audio is already
         # playing loses however much was spoken in the meantime, which is expected
         # behaviour but would otherwise be scored as a recognition error.

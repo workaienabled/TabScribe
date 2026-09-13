@@ -38,7 +38,7 @@ reopen its panel. Save any transcript before reloading.
 - **Download:** always downloads the entire transcript as a plain-text `.txt` file,
   even with text selected, with timestamps if enabled. Download before closing:
   transcripts are not saved automatically.
-- **Include my microphone in the saved file** (off by default): also transcribes
+- **Include my microphone in the saved file** (on by default): also transcribes
   your own speech and merges it into the **downloaded file only**. It is never
   shown in the live transcript and never copied by Copy. See below.
 - **Gear → Clear transcript:** immediately clears text, including the current
@@ -62,8 +62,17 @@ The tab carries every voice except yours. Turning on **Include my microphone in
 the saved file** transcribes your microphone in parallel and merges it into the
 file written by **Download**, labelled `You:` against `Meeting:`.
 
-- It is **off by default** and asks for microphone permission the first time it
-  actually runs, not when you tick the box.
+- It is **on by default**. Chrome asks for microphone access the first time you
+  press **Start**; the request is made from that click, because Chrome refuses
+  a microphone request that is not tied to a real user action.
+- For the same reason, popping out into a window resumes the **meeting**
+  transcript immediately but not the microphone: that resume is automatic, not a
+  click. Press Stop then Start in the window to include your microphone there.
+- If you say no, or dismiss the prompt, or have no microphone, **the meeting
+  transcript is completely unaffected** — same live text, same saved file. The
+  reason is reported next to the option, never as a recognition error, and the
+  option stays ticked so a one-off problem does not disable it forever.
+- Untick it if you would rather not be asked at all.
 - It **never appears in the live transcript** and is never part of Copy. Two
   independent recognizers give no reliable relative ordering, so showing them
   interleaved live would imply an accuracy this cannot deliver. In the file the
@@ -71,9 +80,10 @@ file written by **Download**, labelled `You:` against `Meeting:`.
   which is good enough to read but is not sample-accurate turn-taking.
 - Your microphone is **never played back** through the speakers, and echo
   cancellation is on so the meeting's own audio is not transcribed twice.
-- If the microphone is refused, missing, or fails at any point, the option turns
-  itself back off and says so; **the meeting transcript is unaffected**. Nothing
-  about tab capture, recognition, or the live view depends on this feature.
+- If the microphone is refused, missing, busy, or fails at any point, the panel
+  says which of those happened and stops retrying for that session; **the meeting
+  transcript is unaffected**. Nothing about tab capture, recognition, or the live
+  view depends on this feature.
 - **Clear** discards captured microphone text along with the transcript, and
   **Undo** does not bring it back: restoring text you cannot see on screen into a
   file would be worse than losing it.
