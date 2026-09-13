@@ -80,6 +80,11 @@
     <div class="model-actions" id="modelActions"><button id="useCloudBtn" class="ghost">Use cloud instead</button><button id="retryModelBtn" class="ghost" hidden>Retry download</button></div>
   </section>
 
+  <div class="transcript-tools"><span>Transcript</span><button id="findBtn" title="Find in transcript (Ctrl+F / ⌘F)" aria-expanded="false" aria-controls="findPanel">Find</button></div>
+  <div id="findPanel" class="find-panel" hidden role="search" aria-label="Find in transcript">
+    <input id="findInput" type="search" placeholder="Find in transcript…" aria-label="Find in transcript" autocomplete="off" spellcheck="false">
+    <div class="find-navigation"><span id="findCount" role="status">Find text</span><button id="findPrev" aria-label="Previous match" title="Previous match (Shift+Enter)" disabled>↑</button><button id="findNext" aria-label="Next match" title="Next match (Enter)" disabled>↓</button><button id="findClose" aria-label="Close find" title="Close (Escape)">×</button></div>
+  </div>
   <main id="transcript" class="transcript" tabindex="0" aria-label="Transcript" aria-live="off">
     <div class="empty" id="emptyHint">
       <div class="empty-symbol" aria-hidden="true">Aa</div>

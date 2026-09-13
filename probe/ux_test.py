@@ -180,9 +180,37 @@ def navigation(ui):
     ui.check('jump does not silently enable auto-scroll', ui.js("!document.getElementById('autoscroll').checked"))
 
 
+def find(ui):
+    ui.fixture(8)
+    ui.capture_store()
+    exists = ui.js("!!document.getElementById('findBtn')")
+    ui.check('find control exists', exists)
+    if not exists:
+        return
+    ui.js("window.originalTextNode = document.querySelector('.seg .txt').firstChild; window.originalText = fixtureStore.toText(); document.getElementById('findBtn').click()")
+    ui.check('find opens with input focused', ui.js("!document.getElementById('findPanel').hidden && document.activeElement.id === 'findInput'"))
+    ui.js("document.getElementById('findInput').value='ROADMAP'; document.getElementById('findInput').dispatchEvent(new Event('input'))")
+    ui.check('case-insensitive search reports exact count', ui.js("document.getElementById('findCount').textContent === '1 of 8'"))
+    ui.check('matches are highlighted without rewriting transcript nodes', ui.js("CSS.highlights.get('search-matches').size === 8 && document.querySelector('.seg .txt').firstChild === originalTextNode"))
+    ui.js("document.getElementById('findNext').click()")
+    ui.check('next match advances', ui.js("document.getElementById('findCount').textContent === '2 of 8'"))
+    ui.js("document.getElementById('findPrev').click(); document.getElementById('findPrev').click()")
+    ui.check('previous match wraps', ui.js("document.getElementById('findCount').textContent === '8 of 8'"))
+    ui.js("fixtureStore.update(8, 'Another roadmap decision.', true, 60000); document.getElementById('tsToggle').dispatchEvent(new Event('change'))")
+    ui.check('incoming transcript refreshes matches', ui.js("CSS.highlights.get('search-matches').size === 9"))
+    ui.js("document.getElementById('findInput').value='[not a regex]'; document.getElementById('findInput').dispatchEvent(new Event('input'))")
+    ui.check('literal search has a clear no-results state', ui.js("document.getElementById('findCount').textContent === 'No matches' && document.getElementById('findNext').disabled"))
+    ui.js("document.getElementById('findClose').click()")
+    ui.check('close removes highlights and restores focus', ui.js("document.getElementById('findPanel').hidden && !CSS.highlights.has('search-matches') && document.activeElement.id === 'findBtn'"))
+    ui.check('search never changed the original transcript content', ui.js("fixtureStore.toText().startsWith(originalText)"))
+    ui.chrome.send('Input.dispatchKeyEvent', session_id=ui.sid, type='keyDown', key='f', code='KeyF', modifiers=2)
+    ui.chrome.send('Input.dispatchKeyEvent', session_id=ui.sid, type='keyUp', key='f', code='KeyF')
+    ui.check('Ctrl+F opens transcript search', ui.js("!document.getElementById('findPanel').hidden && document.activeElement.id === 'findInput'"))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('stage', choices=['shell', 'reading', 'navigation'])
+    parser.add_argument('stage', choices=['shell', 'reading', 'navigation', 'find'])
     args = parser.parse_args()
     ui = UI()
     try:

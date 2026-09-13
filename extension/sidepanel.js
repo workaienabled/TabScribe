@@ -18,6 +18,7 @@
  */
 import { Transcriber, buildAudioGraph, formatClock } from './transcriber.js';
 import * as prefs from './prefs.js';
+import { createTranscriptSearch } from './transcript-search.js';
 
 const el = {
   start: document.getElementById('startBtn'),
@@ -196,6 +197,11 @@ const nodes = new Map();
 let lastStore = null;
 let heldUpdates = false;
 let following = true;
+const transcriptSearch = createTranscriptSearch({
+  transcript: el.transcript,
+  onNavigate: () => { following = false; },
+  onOpen: () => { setPrefsOpen(false); following = false; },
+});
 
 function nearLatest() {
   return el.transcript.scrollHeight - el.transcript.scrollTop - el.transcript.clientHeight < 48;
@@ -291,10 +297,11 @@ function render(store) {
   el.transcript.classList.toggle('holding', !!sel);
 
   // Autoscrolling while the user is dragging moves the text under the cursor.
-  if (el.autoscroll.checked && following && !sel) {
+  if (el.autoscroll.checked && following && !sel && !transcriptSearch.isOpen()) {
     el.transcript.scrollTop = el.transcript.scrollHeight;
   }
   refreshJumpButton();
+  transcriptSearch.refresh();
 }
 
 function refreshSelectionUi() {
@@ -908,6 +915,7 @@ function clear() {
   if (sel && el.transcript.contains(sel.anchorNode)) sel.removeAllRanges();
   el.transcript.classList.remove('holding');
   el.copy.textContent = 'Copy';
+  transcriptSearch.refresh();
 
   setStatus(transcriber?.running
     ? 'Cleared. Still listening.'
