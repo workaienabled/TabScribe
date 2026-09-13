@@ -33,6 +33,9 @@ try:
     ui.shot('focused-selection')
     ui.js("getSelection().removeAllRanges();document.getElementById('prefsBtn').click()")
     ui.shot('focused-preferences')
+    # The microphone option, which lives with the other occasional settings.
+    ui.js("document.getElementById('includeMic').scrollIntoView({block:'nearest'})")
+    ui.shot('focused-mic-option')
     ui.size(300, 400)
     ui.shot('focused-short-preferences')
     ui.js("document.getElementById('clearBtn').scrollIntoView({block:'nearest'})")
@@ -41,5 +44,4 @@ try:
     ui.size(320, 680)
     ui.shot('focused-clear-undo')
 finally:
-    ui.chrome.kill()
-    ui.temp.cleanup()
+    ui.cleanup()

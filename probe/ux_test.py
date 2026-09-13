@@ -8,6 +8,7 @@ import argparse
 import base64
 import json
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import time
@@ -21,8 +22,11 @@ OUT.mkdir(parents=True, exist_ok=True)
 
 class UI:
     def __init__(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='tabscribe-ux-')
-        self.chrome = PipeChrome(self.temp.name, extra_args=['--enable-unsafe-extension-debugging'])
+        # Not TemporaryDirectory: Chrome keeps writing into the profile for a
+        # moment after kill(), and its automatic cleanup raced that, failing an
+        # otherwise green run with "Directory not empty: 'Default'".
+        self.profile = tempfile.mkdtemp(prefix='tabscribe-ux-')
+        self.chrome = PipeChrome(self.profile, extra_args=['--enable-unsafe-extension-debugging'])
         self.chrome.launch()
         self.ext_id = self.chrome.send('Extensions.loadUnpacked', path=str(ROOT / 'extension'))['id']
         self.tid, self.sid = self.chrome.new_tab(f'chrome-extension://{self.ext_id}/sidepanel.html')
@@ -75,9 +79,18 @@ class UI:
           TranscriptStore.prototype.liveSegments = original;
         })()""")
 
-    def finish(self, stage):
+    def cleanup(self):
+        """Tear the browser down, then remove its profile without racing it."""
         self.chrome.kill()
-        self.temp.cleanup()
+        # kill() waits for exit, but the kernel may still be flushing its writes.
+        for _ in range(20):
+            shutil.rmtree(self.profile, ignore_errors=True)
+            if not Path(self.profile).exists():
+                return
+            time.sleep(0.25)
+
+    def finish(self, stage):
+        self.cleanup()
         (OUT / f'ux-{stage}.json').write_text(json.dumps(self.checks, indent=2))
         passed = sum(c['ok'] for c in self.checks)
         print(f'RESULT: {passed}/{len(self.checks)} checks passed', flush=True)
@@ -147,16 +160,26 @@ def reading(ui):
     ui.check('light and dark themes actually differ', light != dark, {'light':light, 'dark':dark})
     time.sleep(.3)
     ui.chrome.kill()
-    ui.chrome = PipeChrome(ui.temp.name, fresh=False, extra_args=['--enable-unsafe-extension-debugging'])
+    ui.chrome = PipeChrome(ui.profile, fresh=False, extra_args=['--enable-unsafe-extension-debugging'])
     ui.chrome.launch()
     ui.chrome.send('Extensions.loadUnpacked', path=str(ROOT / 'extension'))
     ui.tid, ui.sid = ui.chrome.new_tab(f'chrome-extension://{ui.ext_id}/sidepanel.html')
     ui.chrome.wait_for_js(ui.sid, "document.getElementById('fontSizeSel').value === '17'")
     ui.check('theme and text size survive Chrome restart', ui.js("document.getElementById('themeSel').value === 'light' && getComputedStyle(document.getElementById('transcript')).fontSize === '17px'"))
-    ui.js("chrome.storage.local.set({prefs:{theme:'invalid', fontSize:9000}})")
+    ui.js("chrome.storage.local.set({prefs:{theme:'invalid', fontSize:9000, lang:'xx-XX', windowWidth:-5}})")
     ui.chrome.send('Page.reload', session_id=ui.sid)
     ui.chrome.wait_for_js(ui.sid, "document.getElementById('status').textContent.length > 0")
     ui.check('invalid stored choices fall back safely', ui.js("document.getElementById('themeSel').value === 'system' && getComputedStyle(document.getElementById('transcript')).fontSize === '13px'"))
+    # Assert the validator itself, not only the rendered control: a select simply
+    # ignores an unknown value, so the control alone would look correct even with
+    # validation deleted entirely.
+    rejected = ui.js("""(async () => {
+      const prefs = await import('./prefs.js');
+      const got = await prefs.load();
+      return {lang: got.lang, theme: got.theme, size: got.fontSize, width: got.windowWidth};
+    })()""", )
+    ui.check('the validator rejects every invalid stored value, not just the visible ones',
+             rejected == {'lang': 'en-US', 'theme': 'system', 'size': 13, 'width': 460}, rejected)
 
 
 def navigation(ui):
@@ -210,6 +233,6 @@ if __name__ == '__main__':
     try:
         globals()[args.stage](ui)
     except Exception:
-        ui.chrome.kill()
+        ui.cleanup()
         raise
     sys.exit(ui.finish(args.stage))

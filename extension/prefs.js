@@ -17,6 +17,11 @@
 
 const KEY = 'prefs';
 
+// The languages the UI actually offers. A stored value outside this set makes
+// recognition report a false capability error, so it is rejected on load.
+export const LANGS = ['en-US', 'en-GB', 'es-ES', 'fr-FR', 'de-DE', 'it-IT',
+                      'pt-BR', 'ja-JP', 'hi-IN'];
+
 export const DEFAULTS = {
   lang: 'en-US',
   localOnly: true,
@@ -33,6 +38,9 @@ export const DEFAULTS = {
   prefsOpen: false,
   theme: 'system',
   fontSize: 13,
+  // Transcribe the microphone into the SAVED file only. Off by default: it needs
+  // a permission prompt, and the product's core promise is the meeting's audio.
+  includeMic: false,
   windowWidth: 460,
   windowHeight: 780,
 };
@@ -40,6 +48,14 @@ export const DEFAULTS = {
 function validChoice(key, value) {
   if (key === 'theme') return ['system', 'light', 'dark'].includes(value);
   if (key === 'fontSize') return [13, 15, 17].includes(value);
+  if (key === 'lang') return LANGS.includes(value);
+  // Dimensions come back from storage that another version of this extension
+  // may have written. A NaN, a negative, or a value larger than any real screen
+  // would open an unusable window, so clamp the accepted range here rather than
+  // at each of the several call sites that read them.
+  if (key === 'windowWidth' || key === 'windowHeight') {
+    return Number.isFinite(value) && value >= 200 && value <= 10000;
+  }
   return typeof value === typeof DEFAULTS[key];
 }
 
@@ -93,7 +109,11 @@ export function onChange(callback) {
     const next = changes[KEY].newValue || {};
     const diff = {};
     for (const k of Object.keys(DEFAULTS)) {
-      if (next[k] !== undefined && next[k] !== cache[k]) diff[k] = next[k];
+      // Validate here too: load() filters, but without this an invalid value
+      // written by another view enters the cache and is persisted back.
+      if (next[k] !== undefined && next[k] !== cache[k] && validChoice(k, next[k])) {
+        diff[k] = next[k];
+      }
     }
     if (!Object.keys(diff).length) return;
     cache = { ...cache, ...diff };

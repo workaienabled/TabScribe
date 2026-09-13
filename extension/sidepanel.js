@@ -18,6 +18,7 @@
  */
 import { Transcriber, buildAudioGraph, formatClock } from './transcriber.js';
 import * as prefs from './prefs.js';
+import { MicTranscriber, mergeTranscripts } from './mic.js';
 
 const el = {
   start: document.getElementById('startBtn'),
@@ -35,6 +36,8 @@ const el = {
   autoscroll: document.getElementById('autoscroll'),
   selectToCopy: document.getElementById('selectToCopy'),
   copyToast: document.getElementById('copyToast'),
+  includeMic: document.getElementById('includeMic'),
+  micHint: document.getElementById('micHint'),
   prefsBtn: document.getElementById('prefsBtn'),
   theme: document.getElementById('themeSel'),
   fontSize: document.getElementById('fontSizeSel'),
@@ -85,6 +88,9 @@ if (IS_WINDOW) {
 }
 
 let transcriber = null;
+// Optional, off by default, and deliberately isolated: see mic.js. Created lazily
+// so that a user who never enables it pays nothing for it existing.
+let mic = null;
 let graph = null;
 let stream = null;
 let targetTabId = null;
@@ -334,7 +340,7 @@ let toastHideTimer = null;
  * out of the accessibility tree between toasts rather than merely transparent.
  */
 function showToast(message = 'Copied') {
-  if (!el.copyToast.checked) return;
+  if (!el.copyToast.checked) return false;
   if (toastTimer) clearTimeout(toastTimer);
   if (toastHideTimer) clearTimeout(toastHideTimer);
 
@@ -348,6 +354,23 @@ function showToast(message = 'Copied') {
     el.toast.classList.remove('show');
     toastHideTimer = setTimeout(() => { el.toast.hidden = true; }, 160);
   }, 900);
+  return true;
+}
+
+/**
+ * Confirm an action the user explicitly asked for.
+ *
+ * The toast is the quiet path and it is optional, so it cannot be the only
+ * acknowledgement: with "Copy toast" off, pressing Copy or Download otherwise
+ * produced no feedback at all and looked broken. Auto-copy stays silent when the
+ * toast is off — it fires on every selection, and narrating it is the noise the
+ * toggle exists to remove.
+ *
+ * The toast keeps its short fixed wording; the longer sentence is only for the
+ * status line, which has room for it.
+ */
+function confirmAction(toastText, statusText) {
+  if (!showToast(toastText)) setStatus(statusText);
 }
 
 async function autoCopySelection() {
@@ -364,7 +387,7 @@ async function autoCopySelection() {
   const ok = await writeClipboard(text);
   if (!ok) {
     // Do not claim success. The manual Copy button remains available.
-    setStatus('Auto-copy failed — press Ctrl+C, or use Copy.', true);
+    setStatus('Auto-copy failed — press Ctrl+C to copy the selection.', true);
     return;
   }
   lastAutoCopied = text;
@@ -542,6 +565,7 @@ function applyPrefs(p) {
   el.autoscroll.checked = p.autoscroll;
   el.selectToCopy.checked = p.selectToCopy;
   el.copyToast.checked = p.copyToast;
+  el.includeMic.checked = p.includeMic;
   setPrefsOpen(p.prefsOpen, { save: false });
   updateModeSummary();
 }
@@ -563,6 +587,7 @@ function savePrefsFromUi() {
     autoscroll: el.autoscroll.checked,
     selectToCopy: el.selectToCopy.checked,
     copyToast: el.copyToast.checked,
+    includeMic: el.includeMic.checked,
   });
 }
 
@@ -580,6 +605,7 @@ prefs.onChange((diff) => {
   if (diff.autoscroll !== undefined) el.autoscroll.checked = diff.autoscroll;
   if (diff.selectToCopy !== undefined) el.selectToCopy.checked = diff.selectToCopy;
   if (diff.copyToast !== undefined) el.copyToast.checked = diff.copyToast;
+  if (diff.includeMic !== undefined) el.includeMic.checked = diff.includeMic;
   if (diff.prefsOpen !== undefined) setPrefsOpen(diff.prefsOpen, { save: false });
   updateModeSummary();
 });
@@ -603,6 +629,20 @@ function ensureTranscriber() {
     },
   });
   return transcriber;
+}
+
+/**
+ * Keep the pop-out control's visible label and accessible name in agreement.
+ * They diverged after a hand-off: the button read "Focus window" while screen
+ * readers still announced "Open in window".
+ */
+function setPopoutLabel(text) {
+  const label = el.popout.querySelector('.popout-label');
+  if (label) label.textContent = text;
+  el.popout.setAttribute('aria-label', text);
+  el.popout.title = text === 'Focus window'
+    ? 'Bring the TabScribe window to the front'
+    : 'Move TabScribe into its own window';
 }
 
 async function popOut() {
@@ -648,7 +688,15 @@ async function popOut() {
     }
 
     if (res.reused) {
-      handedOff = false;
+      // The window already holds this tab's capture, so re-arming here is
+      // guaranteed to fail with "Cannot capture a tab with an active stream".
+      // Focusing it is the whole action; leave the hand-off state alone.
+      if (handedOff) {
+        el.status.textContent = 'TabScribe is already open in a window.';
+        el.status.classList.remove('error');
+        el.popout.disabled = false;
+        return;
+      }
       setStatus('TabScribe is already open in a window.');
       const cap = await armCapture();
       if (cap.ok && wasRunning) await start();
@@ -665,6 +713,10 @@ async function popOut() {
     // message is written for that case.
     handedOff = true;
     setState('idle');
+    // The window owns the transcript now. A recovery copy left behind here would
+    // let this dead panel restore and export text the live view no longer has.
+    clearedSnapshot = null;
+    el.undoBar.hidden = true;
     el.status.textContent = res.panelClosed
       ? 'Moved to its own window.'
       : 'Moved to its own window. You can close this panel.';
@@ -672,7 +724,7 @@ async function popOut() {
     el.start.disabled = true;
     el.stop.disabled = true;
     el.popout.disabled = false;
-    el.popout.querySelector('.popout-label').textContent = 'Focus window';
+    setPopoutLabel('Focus window');
   } catch (e) {
     handedOff = false;
     setStatus(String(e && e.message ? e.message : e), true);
@@ -758,16 +810,33 @@ async function start() {
 
     el.stop.disabled = false;
     setStatus('Listening. Select any text to copy part of it.');
+
+    // Strictly after the meeting transcription is live, and never awaited into
+    // its failure path: the microphone is a bonus for the saved file and must
+    // not be able to break, delay, or fail the thing the user actually asked for.
+    startMicIfEnabled(lang, localOnly);
   } catch (e) {
     setState('error');
     setStatus(String(e && e.message ? e.message : e), true);
+    // The recognizer may already be running against the graph teardown is about
+    // to destroy (transcriber.start() succeeded, then something after it threw).
+    // Leaving it attached to a dead track produces an endless restart loop that
+    // no longer has any audio to hear.
+    if (transcriber?.running) {
+      try { await transcriber.stop({ flushMs: 0 }); } catch (e2) { /* best effort */ }
+    }
     await teardown();
     el.start.disabled = false;
+    el.stop.disabled = true;
   }
 }
 
 async function teardown() {
   armed = false;
+  // The microphone indicator must not stay lit after the panel lets the tab go.
+  if (mic) {
+    try { await mic.stop({ flushMs: 0 }); } catch (e) { /* best effort */ }
+  }
   try { await graph?.cleanup(); } catch (e) { /* best effort */ }
   graph = null;
   if (stream) {
@@ -781,6 +850,11 @@ async function teardown() {
 async function stop() {
   el.stop.disabled = true;
   setStatus('Finishing…');
+  // Stop the microphone first and independently; its text is already banked in
+  // its own store, and a failure here must not delay finishing the meeting.
+  if (mic) {
+    try { await mic.stop({ flushMs: 600 }); } catch (e) { /* best effort */ }
+  }
   if (transcriber) {
     // Give the recognizer a moment to finalize the sentence in flight.
     await transcriber.stop({ flushMs: 1500 });
@@ -806,13 +880,84 @@ if (!IS_WINDOW) {
       handedOff = false; // this document owns the tab again
       el.start.disabled = false;
       el.popout.disabled = false;
-      el.popout.querySelector('.popout-label').textContent = 'Open in window';
+      setPopoutLabel('Open in window');
       setStatus('Back in the side panel. Press Start to transcribe this tab.');
     }
   });
 }
 
 /* ------------------------------------------------------------------- output */
+
+/* ------------------------------------------------------------- microphone */
+
+/**
+ * Start microphone capture if the user opted in. Fire-and-forget by design.
+ *
+ * Every failure mode ends the same way: the checkbox goes back off, the hint
+ * explains why, and the meeting transcription carries on untouched. Nothing in
+ * here is awaited by start(), so a permission prompt cannot stall Start either.
+ */
+async function startMicIfEnabled(lang, processLocally) {
+  if (!el.includeMic.checked) return;
+  try {
+    if (!mic) mic = new MicTranscriber();
+    if (mic.running) return;
+
+    // Ask for the optional permission only when the feature is actually used.
+    let granted = true;
+    try {
+      granted = await chrome.permissions.request({ permissions: ['audioCapture'] });
+    } catch (e) {
+      // Some builds resolve audioCapture through getUserMedia alone; let the
+      // real capture attempt below be the decider rather than failing here.
+      granted = true;
+    }
+    if (!granted) { disableMic('Microphone permission was refused.'); return; }
+
+    const res = await mic.start({ lang, processLocally });
+    if (!res.ok) {
+      disableMic(res.denied
+        ? 'Microphone permission was refused. Your own speech will not be saved.'
+        : `Microphone unavailable: ${res.error}`);
+      return;
+    }
+    setMicHint('Your microphone is being transcribed into the saved file only.', false);
+  } catch (e) {
+    disableMic(`Microphone unavailable: ${e && e.message ? e.message : e}`);
+  }
+}
+
+function setMicHint(text, denied) {
+  el.micHint.textContent = text;
+  el.micHint.classList.toggle('denied', !!denied);
+}
+
+/**
+ * Turn the feature off after a failure and say so where the control lives.
+ * The status line is reserved for the meeting transcription; a microphone
+ * problem must not read like a recognition failure.
+ */
+function disableMic(reason) {
+  el.includeMic.checked = false;
+  savePrefsFromUi();
+  setMicHint(`${reason} The meeting transcript is unaffected.`, true);
+  if (el.prefsPanel.hidden) setPrefsOpen(true);
+}
+
+/** The saved text: meeting only, or meeting merged with the user's own speech. */
+function transcriptForSaving() {
+  const timestamps = el.timestamps.checked;
+  if (!transcriber) return '';
+  if (!el.includeMic.checked || !mic || !mic.hasText()) {
+    return transcriber.getText({ timestamps });
+  }
+  try {
+    return mergeTranscripts(transcriber.store, mic.store, { timestamps });
+  } catch (e) {
+    // Never lose the meeting transcript to a merge bug.
+    return transcriber.getText({ timestamps });
+  }
+}
 
 async function writeClipboard(text) {
   try {
@@ -857,20 +1002,39 @@ async function copy() {
     return;
   }
 
-  showToast('Copied');
+  const words = text.split(/\s+/).filter(Boolean).length;
+  confirmAction('Copied', selected
+    ? `Copied the selected passage (${words} words).`
+    : `Copied the whole transcript (${words} words).`);
 }
 
 function download() {
-  const text = transcriber ? transcriber.getText({ timestamps: el.timestamps.checked }) : '';
-  if (!text) { setStatus('Nothing to save yet.'); return; }
+  // Download is the one place the microphone appears: the live view and Copy
+  // stay exactly as they were.
+  const text = transcriptForSaving();
+  if (!text) { setStatus('Nothing to download yet.'); return; }
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `transcript-${stamp}.txt`;
-  a.click();
+  const name = `transcript-${stamp}.txt`;
+  let url = null;
+  try {
+    // Losing the whole meeting to a silent failure is the worst outcome this UI
+    // has, so the one unavoidable output path reports when it did not work.
+    url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+  } catch (e) {
+    if (url) { try { URL.revokeObjectURL(url); } catch (e2) { /* nothing to revoke */ } }
+    setStatus(`Could not save the transcript: ${e && e.message ? e.message : e}. `
+      + 'Use Copy all and paste it somewhere safe.', true);
+    return;
+  }
   setTimeout(() => URL.revokeObjectURL(url), 5000);
+  const withMic = el.includeMic.checked && mic?.hasText();
+  confirmAction('Downloaded', withMic
+    ? `Downloaded ${name}, including your microphone.`
+    : `Downloaded ${name}`);
 }
 
 // Only the most recent Clear is recoverable, in this view's memory. It is never
@@ -893,7 +1057,9 @@ function undoClear() {
 
 function clear() {
   // The occasional action lives in Preferences; reveal its result and Undo.
-  setPrefsOpen(false);
+  // save:false — collapsing is a consequence of Clear, not a preference the user
+  // expressed, and persisting it would also reach into the other open view.
+  setPrefsOpen(false, { save: false });
   el.transcript.focus({preventScroll: true});
   if (transcriber && !transcriber.store.isEmpty()) {
     clearedSnapshot = transcriber.store.serialize();
@@ -916,6 +1082,11 @@ function clear() {
   if (transcriber) {
     transcriber.reset();
   }
+  // Clear means clear: microphone text is part of what a later Download would
+  // write, so leaving it behind would resurrect speech the user just discarded.
+  // Undo intentionally does not restore it — recovering hidden text into a file
+  // the user cannot see on screen would be worse than losing it.
+  mic?.clear();
 
   // A pending selection inside the removed text is meaningless now.
   const sel = window.getSelection();
@@ -965,6 +1136,20 @@ el.timestamps.addEventListener('change', () => {
   if (lastStore) render(lastStore);
 });
 el.autoscroll.addEventListener('change', savePrefsFromUi);
+el.includeMic.addEventListener('change', () => {
+  savePrefsFromUi();
+  if (el.includeMic.checked) {
+    setMicHint('Your own speech is added to the downloaded transcript only — never shown live. Needs microphone permission.', false);
+    // Turning it on mid-meeting should take effect now, not at the next Start.
+    if (transcriber?.running) startMicIfEnabled(el.lang.value, el.localOnly.checked);
+  } else if (mic) {
+    // Turning it off releases the microphone immediately. Text already captured
+    // is kept: the user may re-enable before saving, and silently discarding it
+    // on a stray click would be the destructive choice.
+    mic.stop({ flushMs: 0 });
+    setMicHint('Microphone off. Your own speech will not be added to the saved file.', false);
+  }
+});
 el.selectToCopy.addEventListener('change', () => {
   savePrefsFromUi();
   // Turning it on mid-selection should not retroactively copy what is already

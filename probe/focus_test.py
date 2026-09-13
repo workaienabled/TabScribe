@@ -65,7 +65,10 @@ def focus(ui):
     click(ui, 'copyBtn')
     time.sleep(.25)
     ui.check('manual copy still copies only the selected passage', ui.js('navigator.clipboard.readText()')==selected)
-    ui.check('manual copy respects the same quiet feedback toggle', ui.js("!document.getElementById('toast').classList.contains('show') && document.getElementById('status').textContent === statusBeforeCopy && document.getElementById('copyBtn').textContent === 'Copy selection'"))
+    # The toggle silences the toast, which fires on every selection while reading.
+    # It must not silence an action the user explicitly pressed: with no toast and
+    # no status, Copy looked broken. Auto-copy stays quiet (asserted in prefs_test).
+    ui.check('manual copy respects the toast toggle but still acknowledges itself', ui.js("!document.getElementById('toast').classList.contains('show') && /copied/i.test(document.getElementById('status').textContent) && document.getElementById('copyBtn').textContent === 'Copy selection'"))
     whole = ui.js('fixtureStore.toText()')
     with tempfile.TemporaryDirectory(prefix='tabscribe-download-test-') as directory:
         for timestamps in [False, True]:
@@ -117,7 +120,6 @@ if __name__=='__main__':
     try:
         focus(ui)
     except Exception:
-        ui.chrome.kill()
-        ui.temp.cleanup()
+        ui.cleanup()
         raise
     sys.exit(ui.finish('focus'))

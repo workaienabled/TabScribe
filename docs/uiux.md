@@ -45,3 +45,53 @@ separate. Logs go to `artifacts/uiux/`.
 No Find, transcript library, built-in AI, recording upload, automatic cloud
 fallback, or fleet rollout. Undo is local to the current view. Download before
 closing the panel or window.
+
+## Merge review fixes
+
+Found by driving the real UI in `probe/robustness_test.py` (stages `robustness`
+and `review`), each reproduced as a failing check before the fix:
+
+- Copy and Download were completely silent when the copy toast was switched off.
+  Both now fall back to the status line; auto-copy stays quiet, which is what the
+  toggle is actually for.
+- A failed Download did nothing at all. It now reports the failure and points at
+  Copy all, because losing a whole meeting silently is the worst outcome here.
+- The pop-out button's accessible name stayed "Open in window" after hand-off
+  while it visibly read "Focus window".
+- Clicking pop-out again after hand-off tried to re-arm a tab the window already
+  held, which can only fail. It now just focuses the window.
+- The Copied toast covered the Undo bar.
+- A throw after `transcriber.start()` tore the audio graph down while leaving the
+  recognizer running against a dead track, producing an endless restart loop.
+- Stored window dimensions were used without validation.
+
+From the independent reviewer:
+
+- A pending Undo survived the pop-out hand-off, letting a dead side panel restore
+  and export a transcript the live window no longer had.
+- With Preferences and the model notice both open in a short window, the footer
+  was pushed off-screen and **Download became unreachable** — everything except
+  the transcript was `flex: none` under `overflow: hidden`. The two optional
+  panels now shrink; they already scroll internally.
+- A stored language was trusted on a bare `typeof` check, so a bad value produced
+  a false "Chrome cannot do this" error. Values arriving from the other view were
+  not validated at all.
+- Clear persisted `prefsOpen: false` as if the user had chosen it, and pushed that
+  into the other open view.
+- Undo spliced two clocks into the saved file, because Clear restarted `t0`.
+- Two failure messages still named the old `Save`/`Copy` buttons, and the undo
+  bar's discard control announced itself as "Dismiss undo".
+
+Two tests were strengthened after the reviewer showed they could pass while the
+behaviour they name was broken: the preferences fallback now asserts the parsed
+store rather than a `select` that silently ignores unknown values, and the manual
+copy check no longer demands total silence on success.
+
+## Microphone in the saved file
+
+Optional, off by default, and deliberately isolated in `extension/mic.js`. A
+second `SpeechRecognition` transcribes the microphone into its own store, merged
+into the download only. `probe/spike_mic.py` measured the premise first on Chrome
+151: two recognizers run concurrently and starting the second does not disturb
+the first. Ordering uses each segment's elapsed offset; both sides are labelled.
+Any failure disables the option and leaves the meeting transcript untouched.

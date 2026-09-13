@@ -184,10 +184,20 @@ def main():
     copied = prepare_profile(PROFILE, MODEL_CACHE)
     print(f"\n=== PROFILE ===\n  fresh profile at {PROFILE}, carried over: {copied or 'nothing'}", flush=True)
 
+    # Microphone interference check: no command-line media flags.
+    #
+    # Measured on Chrome 151: BOTH --use-fake-device-for-media-stream and
+    # --use-fake-ui-for-media-stream break tabCapture in this harness with
+    # "Cannot capture a tab with an active stream" — and they do so with the
+    # microphone feature switched OFF as well, so they test the flag rather than
+    # the feature. Permission is granted over CDP instead, and getUserMedia opens
+    # a real (silent) input device, leaving tab capture completely untouched.
+    mic_args = []
+
     # First launch creates Default/Preferences so the action can be pinned; the
     # extension is loaded on the second launch, into a profile that already has the
     # pin in place.
-    warm = PipeChrome(PROFILE, extensions=[], fresh=False)
+    warm = PipeChrome(PROFILE, extensions=[], fresh=False, extra_args=mic_args)
     warm.launch("about:blank")
     time.sleep(3)
     warm.kill()
@@ -196,7 +206,7 @@ def main():
     grafted = graft_model_registration(PROFILE, MODEL_CACHE)
     print(f"  SODA registration grafted: {grafted or 'nothing'}", flush=True)
 
-    chrome = PipeChrome(PROFILE, extensions=[], fresh=False)
+    chrome = PipeChrome(PROFILE, extensions=[], fresh=False, extra_args=mic_args)
     transcript = ""
     clip = ""
     scored = {}
@@ -296,6 +306,32 @@ def main():
         checks.add("on-device en-US model available", model == "available", f"availability={model}")
 
         print("\n=== RUN ===", flush=True)
+        # Optional: prove the microphone side-channel cannot degrade the meeting
+        # transcription it runs alongside. Same known audio, same WER threshold,
+        # with the microphone feature switched on and a fake mic device feeding it.
+        if os.environ.get('TABSCRIBE_MIC_CHECK') == '1':
+            # Grant only to this extension origin, over CDP, so no global media
+            # switch is involved and tab capture is unaffected.
+            #
+            # grantPermissions REPLACES the origin's whole grant set, so the
+            # clipboard permissions the later checks depend on must be re-listed
+            # here or reading the clipboard fails with NotAllowedError.
+            try:
+                chrome.send('Browser.grantPermissions',
+                            origin=f'chrome-extension://{ext_id}',
+                            permissions=['audioCapture', 'clipboardReadWrite',
+                                         'clipboardSanitizedWrite'])
+            except Exception as e:  # noqa: BLE001
+                print(f"  (grantPermissions: {e})", flush=True)
+            chrome.evaluate(panel_sid, """(() => {
+              const box = document.getElementById('includeMic');
+              box.checked = true;
+              box.dispatchEvent(new Event('change'));
+            })()""", await_promise=False)
+            checks.add("microphone option enabled for the interference check",
+                       chrome.evaluate(panel_sid,
+                                       "document.getElementById('includeMic').checked",
+                                       await_promise=False))
         # Start recognition BEFORE playback. Pressing Start after audio is already
         # playing loses however much was spoken in the meantime, which is expected
         # behaviour but would otherwise be scored as a recognition error.

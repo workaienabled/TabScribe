@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package the clean uiux branch without replacing the earlier download ZIPs."""
+"""Package the clean mainline without replacing the earlier download ZIPs."""
 from pathlib import Path
 import hashlib
 import json
@@ -29,8 +29,9 @@ def build(name, entries):
 
 
 def main():
-    if git('branch', '--show-current') != 'uiux':
-        raise SystemExit('This builder is for the local uiux branch.')
+    branch = git('branch', '--show-current')
+    if branch not in ('master', 'uiux'):
+        raise SystemExit(f'Expected master (or uiux); on {branch!r}.')
     if git('status', '--porcelain'):
         raise SystemExit('Commit verified source changes before packaging.')
     OUT.mkdir(parents=True, exist_ok=True)
@@ -39,8 +40,8 @@ def main():
     extension = [(ROOT / name, 'tabscribe-extension/' + name.removeprefix('extension/'))
                  for name in sorted(names) if name.startswith('extension/')]
     assert any(name.endswith('/manifest.json') for _, name in extension)
-    packages = [build('tabscribe-uiux-extension.zip', extension),
-                build('tabscribe-uiux-source.zip', source)]
+    packages = [build('tabscribe-extension.zip', extension),
+                build('tabscribe-source.zip', source)]
     report = {'branch':git('branch','--show-current'), 'commit':git('rev-parse','HEAD'),
               'packages':packages, 'integrity':'Every entry compared byte-for-byte to the working tree.'}
     (OUT / 'package-report.json').write_text(json.dumps(report, indent=2))

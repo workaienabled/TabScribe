@@ -62,6 +62,8 @@
       <label class="check"><input type="checkbox" id="selectToCopy" checked> Select to copy</label>
       <label class="check"><input type="checkbox" id="copyToast" checked> Copy toast</label>
     </div>
+    <label class="check mic-check"><input type="checkbox" id="includeMic"> Include my microphone in the saved file</label>
+    <p class="field-hint" id="micHint">Your own speech is added to the downloaded transcript only — never shown live. Needs microphone permission.</p>
     <p class="field-hint" id="recognitionHint">Language and on-device/cloud apply at the next Start.</p>
     <button id="clearBtn" class="danger" title="Clear this transcript (can be undone)" disabled>Clear transcript</button>
   </div>
@@ -85,7 +87,7 @@
 
   <button id="jumpLatestBtn" class="jump-latest" hidden>↓ Back to live</button>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden>Copied</div>
-  <div id="undoBar" class="undo-bar" hidden><span role="status">Transcript cleared</span><button id="undoClearBtn">Undo</button><button id="undoDismiss" aria-label="Dismiss undo" title="Discard recovery copy">×</button></div>
+  <div id="undoBar" class="undo-bar" hidden><span role="status">Transcript cleared</span><button id="undoClearBtn">Undo</button><button id="undoDismiss" aria-label="Discard recovery copy" title="Discard recovery copy">×</button></div>
   <footer class="footer">
     <div class="stats"><span id="wordCount">0 words</span></div>
     <div class="actions">

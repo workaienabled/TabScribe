@@ -55,7 +55,10 @@ button.prefs-toggle[aria-expanded="true"] { color: var(--fg); border-color: var(
 body.view-window #popoutBtn { display: none; }
 @media (max-width: 340px) { button.popout .popout-label { display: none; } button.popout { padding: 5px 9px; } }
 
-.prefs-panel { flex: none; padding: 4px 12px 10px; border-bottom: 1px solid var(--border); max-height: 45%; overflow-y: auto; overscroll-behavior: contain; }
+/* flex: 0 1 auto, not none: body is overflow:hidden, so an optional panel that
+   refuses to shrink pushes the footer — and with it Download — off-screen in a
+   short window. These two already scroll internally, so they absorb the squeeze. */
+.prefs-panel { flex: 0 1 auto; padding: 4px 12px 10px; border-bottom: 1px solid var(--border); max-height: 45%; overflow-y: auto; overscroll-behavior: contain; }
 .prefs-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .prefs-row > .field-label:first-child { flex: none; font-size: 11px; color: var(--muted); }
 .prefs-row > select { flex: 1; min-width: 0; }
@@ -66,6 +69,9 @@ select { min-height: 28px; padding: 4px 6px; border: 1px solid var(--border); bo
 .checks { display: flex; flex-wrap: wrap; gap: 8px 12px; }
 .check { display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--muted); cursor: pointer; }
 .check input { margin: 0; }
+.mic-check { margin-top: 8px; }
+#micHint { margin: 4px 0 0; }
+#micHint.denied { color: var(--danger); }
 .field-hint { color: var(--muted); font-size: 11px; margin: 8px 0; }
 #clearBtn { margin-top: 4px; }
 
@@ -73,7 +79,7 @@ select { min-height: 28px; padding: 4px 6px; border: 1px solid var(--border); bo
 .status.error { color: var(--danger); }
 .status:empty { display: none; }
 
-.model-panel { margin: 0 12px 10px; padding: 10px 11px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; max-height: 45%; overflow-y: auto; flex: none; }
+.model-panel { margin: 0 12px 10px; padding: 10px 11px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; max-height: 45%; overflow-y: auto; flex: 0 1 auto; }
 .model-head { display: flex; gap: 7px; align-items: center; }
 .model-icon { color: var(--accent); }
 .model-head strong { font-size: 12.5px; }
@@ -108,6 +114,9 @@ select { min-height: 28px; padding: 4px 6px; border: 1px solid var(--border); bo
 .actions button { font-size: 12px; padding: 4px 10px; }
 .jump-latest { flex: none; align-self: flex-end; margin: 0 12px 4px; padding: 2px 8px; min-height: 0; border: 0; background: transparent; color: var(--accent); font-size: 11px; }
 .toast { position: absolute; z-index: 8; left: 50%; bottom: 48px; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 4px 12px; border-radius: 12px; background: var(--fg); color: var(--bg); font-size: 11.5px; pointer-events: none; opacity: 0; transition: opacity .12s ease-out; }
+/* Clear the recovery bar when it is showing: Undo is time-limited and must stay
+   both readable and clickable while a copy confirmation is on screen. */
+body:has(#undoBar:not([hidden])) .toast { bottom: 88px; }
 .toast.show { opacity: .92; }
 body { position: relative; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }

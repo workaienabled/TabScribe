@@ -448,7 +448,10 @@ export class Transcriber {
       // Continue transcribing from a clean slate. isRestart is deliberately NOT set:
       // epochs exist to keep old segments addressable, and there are no old segments
       // left to protect after a clear.
-      this.t0 = Date.now();
+      //
+      // t0 is deliberately NOT reset: one capture keeps one timeline. Restarting
+      // the clock here made post-Clear timestamps count from zero again, so an
+      // Undo spliced two different clocks into the saved transcript.
       try {
         this.start(track, { ...this.options });
       } catch (e) {

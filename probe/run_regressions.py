@@ -16,11 +16,15 @@ OUT.mkdir(parents=True, exist_ok=True)
 CASES = [(f'ux-{stage}', ['ux_test.py', stage], {}) for stage in ['shell','reading','navigation','undo']]
 CASES += [
     ('ux-focus', ['focus_test.py'], {}),
+    ('ux-robustness', ['robustness_test.py'], {}),
+    ('ux-review', ['robustness_test.py', 'review'], {}),
+    ('ux-mic', ['mic_test.py'], {}),
     ('prefs', ['prefs_test.py'], {}),
     ('popout', ['popout_test.py'], {}),
     ('e2e-sample1', ['e2e_full.py'], {}),
     ('e2e-sample2', ['e2e_full.py'], {'TABSCRIBE_CLIP':'sample2.wav'}),
     ('e2e-resume', ['e2e_full.py'], {'TABSCRIBE_RESUME_CHECK':'1'}),
+    ('e2e-mic-interference', ['e2e_full.py'], {'TABSCRIBE_MIC_CHECK':'1'}),
     ('selection', ['selection_test.py'], {}),
     ('clear', ['clear_test.py'], {}),
     ('model-notice', ['model_notice_test.py'], {}),

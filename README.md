@@ -38,6 +38,9 @@ reopen its panel. Save any transcript before reloading.
 - **Download:** always downloads the entire transcript as a plain-text `.txt` file,
   even with text selected, with timestamps if enabled. Download before closing:
   transcripts are not saved automatically.
+- **Include my microphone in the saved file** (off by default): also transcribes
+  your own speech and merges it into the **downloaded file only**. It is never
+  shown in the live transcript and never copied by Copy. See below.
 - **Gear → Clear transcript:** immediately clears text, including the current
   utterance, and keeps listening. Preferences close to reveal **Undo**, which
   restores the cleared text before anything received since.
@@ -52,6 +55,30 @@ machines. Language and recognition mode apply to the next Start. A Cloud badge
 appears only when recognition is not on-device.
 
 ## Privacy and first-run download
+
+### Your own microphone (optional)
+
+The tab carries every voice except yours. Turning on **Include my microphone in
+the saved file** transcribes your microphone in parallel and merges it into the
+file written by **Download**, labelled `You:` against `Meeting:`.
+
+- It is **off by default** and asks for microphone permission the first time it
+  actually runs, not when you tick the box.
+- It **never appears in the live transcript** and is never part of Copy. Two
+  independent recognizers give no reliable relative ordering, so showing them
+  interleaved live would imply an accuracy this cannot deliver. In the file the
+  turns are ordered by each segment's elapsed time from the start of the session,
+  which is good enough to read but is not sample-accurate turn-taking.
+- Your microphone is **never played back** through the speakers, and echo
+  cancellation is on so the meeting's own audio is not transcribed twice.
+- If the microphone is refused, missing, or fails at any point, the option turns
+  itself back off and says so; **the meeting transcript is unaffected**. Nothing
+  about tab capture, recognition, or the live view depends on this feature.
+- **Clear** discards captured microphone text along with the transcript, and
+  **Undo** does not bring it back: restoring text you cannot see on screen into a
+  file would be worse than losing it.
+- With the option on but nothing heard, the saved file is byte-for-byte the
+  meeting transcript.
 
 **On-device only** is enabled by default. Chrome may need a one-time speech-model
 download, roughly 300 MB per language. The notice shows elapsed time and an
@@ -84,7 +111,7 @@ are scored by word error rate, not by visual inspection. UI fixture tests are
 separate from real speech-recognition tests. `probe/focus_test.py` tests the core
 meeting-to-copy-to-download flow against real clipboard and file contents.
 
-After committing verified source, `python3 make-uiux-package.py` builds the
+After committing verified source, `python3 make-package.py` builds the
 separately named extension/source ZIPs under `artifacts/uiux/`, byte-checks every
 entry, and records SHA-256 hashes. It leaves the earlier download ZIPs intact.
 

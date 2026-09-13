@@ -10,6 +10,9 @@
     "storage",
     "activeTab"
   ],
+  "optional_permissions": [
+    "audioCapture"
+  ],
   "background": {
     "service_worker": "background.js",
     "type": "module"
