@@ -4,7 +4,7 @@
   --bg: #ffffff; --surface: #f8f9fa; --raised: #eef1f6;
   --fg: #1f1f1f; --muted: #5f6368; --border: #dadce0;
   --accent: #1a73e8; --accent-fg: #ffffff; --soft-accent: #e8f0fe;
-  --danger: #c5221f; --ok: #188038; --interim: #80868b;
+  --danger: #c5221f; --ok: #188038; --interim: #687078;
   --reading-size: 13px;
 }
 @media (prefers-color-scheme: dark) {
@@ -42,7 +42,9 @@ button.danger:hover:not(:disabled) { color: var(--danger); border-color: var(--d
    Clear screen. */
 button#clearBtn { margin-left: 4px; }
 
-.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; margin-right: 1px; }
+.dot { position: absolute; right: -3px; top: -3px; width: 9px; height: 9px;
+  border: 2px solid var(--bg); border-radius: 50%; background: var(--muted);
+  pointer-events: none; }
 .dot[data-state="listening"] { background: var(--ok); }
 .dot[data-state="error"] { background: var(--danger); }
 .dot[data-state="starting"], .dot[data-state="restarting"] { background: var(--accent); }
@@ -55,13 +57,19 @@ button#clearBtn { margin-left: 4px; }
 button.icon-btn { display: inline-flex; align-items: center; justify-content: center;
   padding: 0; width: 28px; height: 28px; flex: none; }
 button.icon-btn svg { display: block; }
+/* Neutral actions recede; Record and meaningful states keep their emphasis. */
+.controls > button { border-radius: 5px; }
+.controls > button.icon-btn { background: transparent; }
+.controls > button:where(.icon-btn:not(.unsaved):not(.mic-status)) { border-color: transparent; }
+.controls > button.icon-btn:where(:hover:not(:disabled)) { background: var(--raised); border-color: var(--border); }
+.controls > button.danger:hover:not(:disabled) { border-color: var(--danger); }
 .gear { display: block; }
 button.popout { display: inline-flex; align-items: center; justify-content: center;
   gap: 5px; padding: 5px 9px; height: 28px; flex: none;
   color: var(--accent); background: transparent; font-size: 11.5px; }
 .popout-label { line-height: 1; }
 .popout-icon { font-size: 13px; line-height: 1; }
-button.prefs-toggle[aria-expanded="true"] { color: var(--fg); border-color: var(--muted); }
+.controls > button.prefs-toggle[aria-expanded="true"] { color: var(--accent); background: var(--soft-accent); border-color: var(--accent); }
 /* The control is a two-way switch, so it stays visible in BOTH views: in the
    panel it reads "Window", in the window it reads "Sidebar". It used to be
    hidden here, which left the pop-out with no way back — and no close handler
@@ -71,7 +79,7 @@ button.prefs-toggle[aria-expanded="true"] { color: var(--fg); border-color: var(
 /* One toggle, two states. The square inside the circle is the stop affordance;
    aria-pressed carries the state for anyone not looking at it. */
 button.record { display: inline-flex; align-items: center; justify-content: center;
-  padding: 0; width: 30px; height: 28px; flex: none; }
+  position: relative; padding: 0; width: 30px; height: 28px; flex: none; }
 .record-icon { width: 11px; height: 11px; border-radius: 50%; background: currentColor; display: block; }
 button.record[aria-pressed="true"] { background: var(--danger); }
 button.record[aria-pressed="true"] .record-icon { border-radius: 2px; width: 9px; height: 9px; }
@@ -79,6 +87,8 @@ button.record[aria-pressed="true"] .record-icon { border-radius: 2px; width: 9px
 /* Microphone status. Colour alone never carries the meaning: the accessible
    name and tooltip are set alongside data-state in sidepanel.js. */
 button.mic-status { position: relative; color: var(--muted); }
+/* Disabled means no click action here, not an inactive microphone. */
+button.mic-status:disabled { opacity: 1; }
 button.mic-status[data-state="recording"] { color: var(--ok); border-color: var(--ok); }
 button.mic-status[data-state="needs-permission"] { color: var(--accent); border-color: var(--accent); }
 button.mic-status[data-state="blocked"], button.mic-status[data-state="error"] { color: var(--danger); border-color: var(--danger); }
@@ -112,7 +122,10 @@ button.mic-status[data-state="blocked"] .mic-slash { display: block; }
 /* flex: 0 1 auto, not none: body is overflow:hidden, so an optional panel that
    refuses to shrink pushes the footer — and with it Download — off-screen in a
    short window. These two already scroll internally, so they absorb the squeeze. */
-.prefs-panel { flex: 0 1 auto; padding: 4px 12px 10px; border-bottom: 1px solid var(--border); max-height: 45%; overflow-y: auto; overscroll-behavior: contain; }
+.prefs-panel { flex: 0 1 auto; padding: 4px 12px 10px; border-bottom: 1px solid var(--border); max-height: 40%; overflow-y: auto; overscroll-behavior: contain; }
+.prefs-group { min-width: 0; margin: 0; padding: 0; border: 0; }
+.prefs-group + .prefs-group { margin-top: 12px; }
+.prefs-group legend { padding: 0 0 7px; font-size: 11px; font-weight: 650; color: var(--fg); }
 .prefs-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .prefs-row > .field-label:first-child { flex: none; font-size: 11px; color: var(--muted); }
 .prefs-row > select { flex: 1; min-width: 0; }
@@ -120,10 +133,12 @@ button.mic-status[data-state="blocked"] .mic-slash { display: block; }
 .reading-options .field-label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); margin: 0; }
 .field-label { font-size: 11px; }
 select { min-height: 28px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--fg); }
-.checks { display: flex; flex-wrap: wrap; gap: 8px 12px; }
-.check { display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--muted); cursor: pointer; }
-.check input { margin: 0; }
-.mic-check { margin-top: 8px; }
+.checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 8px; }
+.check { display: flex; align-items: center; gap: 7px; min-height: 28px;
+  padding: 4px 2px; border-radius: 4px; font-size: 11.5px; color: var(--fg); cursor: pointer; }
+.check:hover { background: var(--surface); }
+.check input { margin: 0; flex: none; accent-color: var(--accent); }
+.mic-check { margin-top: 6px; }
 #micHint { margin: 4px 0 0; }
 #micHint.denied { color: var(--danger); }
 .mic-grant { margin-top: 6px; font-size: 11.5px; padding: 3px 10px; }
@@ -139,7 +154,7 @@ select { min-height: 28px; padding: 4px 6px; border: 1px solid var(--border); bo
 .grant-why { color: var(--muted); font-size: 12.5px; margin: 0 0 18px; }
 .grant-actions { display: flex; gap: 8px; }
 .field-hint { color: var(--muted); font-size: 11px; margin: 8px 0; }
-#clearBtn { margin-top: 4px; }
+
 
 .cloud-warning { flex: none; margin: 0; padding: 5px 12px; background: var(--soft-accent);
   border-bottom: 1px solid var(--border); color: var(--danger);
@@ -173,10 +188,10 @@ select { min-height: 28px; padding: 4px 6px; border: 1px solid var(--border); bo
 .transcript.holding { box-shadow: inset 2px 0 var(--accent); }
 .empty { color: var(--muted); font-size: 12px; padding: 14px 2px; white-space: normal; max-width: 42ch; }
 
-/* Delete asks first when the transcript is not on disk. In normal flow, at the
-   bottom of the panel: an absolutely positioned bar covered the "Screen cleared"
-   notice, hiding the words that explain what is at stake. A question that
-   obscures other status is worse than no question. */
+/* Contextual feedback has no height when inactive. Anchor the toast above the
+   actual bars, rather than guessing their heights as labels wrap. */
+.feedback-stack { position: relative; display: flex; flex-direction: column; flex: none; }
+/* The question stays in flow, never covering the transcript. */
 .confirm-bar {
   flex: none; order: 99;
   display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center;
@@ -184,8 +199,8 @@ select { min-height: 28px; padding: 4px 6px; border: 1px solid var(--border); bo
   border-top: 2px solid var(--danger); background: var(--surface);
 }
 .confirm-bar #confirmText { flex: 1 1 100%; }
-.confirm-actions { display: flex; gap: 6px; margin-left: auto; }
-.confirm-bar button { font-size: 11.5px; padding: 3px 10px; }
+.confirm-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-left: auto; min-width: 0; }
+.confirm-bar button { font-size: 11.5px; padding: 3px 10px; min-height: 28px; }
 .confirm-delete { color: var(--danger); border-color: var(--danger); }
 .confirm-save { font-weight: 600; }
 
@@ -205,14 +220,7 @@ button#downloadBtn.unsaved { color: var(--accent); border-color: var(--accent); 
 .link-btn { padding: 1px 6px; border: 0; background: transparent; color: var(--accent); font-size: 11px; }
 .jump-latest { flex: none; align-self: flex-end; margin: 0 12px 4px; padding: 2px 8px; min-height: 0; border: 0; background: transparent; color: var(--accent); font-size: 11px; }
 .toast { position: absolute; z-index: 8; left: 50%; bottom: 48px; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 4px 12px; border-radius: 12px; background: var(--fg); color: var(--bg); font-size: 11.5px; pointer-events: none; opacity: 0; transition: opacity .12s ease-out; }
-/* Clear the recovery bar when it is showing: Undo is time-limited and must stay
-   both readable and clickable while a copy confirmation is on screen. */
-body:has(#undoBar:not([hidden])) .toast { bottom: 88px; }
 .toast.show { opacity: .92; }
-/* The toast floats a fixed distance off the bottom, so it lands on whatever is
-   there. When Delete is asking, that is the question — and the toast covered the
-   words explaining what was at stake. Lift it clear of the bar while the
-   question is open. */
-body:has(#confirmBar:not([hidden])) .toast { bottom: 96px; }
+.feedback-stack:has(#confirmBar:not([hidden]), #undoBar:not([hidden])) .toast { bottom: calc(100% + 8px); }
 body { position: relative; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }

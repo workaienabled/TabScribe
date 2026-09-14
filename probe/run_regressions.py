@@ -15,6 +15,10 @@ OUT = ROOT / 'artifacts' / 'uiux'
 OUT.mkdir(parents=True, exist_ok=True)
 CASES = [(f'ux-{stage}', ['ux_test.py', stage], {}) for stage in ['shell','reading','navigation','undo']]
 CASES += [
+    ('ux-refinement-surface', ['ui_refinement_test.py', 'surface'], {}),
+    ('ux-preferences-refinement', ['preferences_refinement_test.py'], {}),
+    ('ux-feedback-refinement', ['feedback_refinement_test.py'], {}),
+    ('ux-restore-order', ['restore_order_test.py'], {}),
     ('ux-focus', ['focus_test.py'], {}),
     ('ux-robustness', ['robustness_test.py'], {}),
     ('ux-review', ['robustness_test.py', 'review'], {}),

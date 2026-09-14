@@ -18,10 +18,10 @@
     lives in its tooltip, so nothing that mattered was lost with the bars.
   -->
   <div class="controls" role="group" aria-label="Transcription controls">
-    <span class="dot" id="dot" data-state="idle" hidden aria-hidden="true"></span>
     <button id="recordBtn" class="primary record" aria-pressed="false"
             aria-label="Start recording" title="Start transcribing this tab">
       <span class="record-icon" aria-hidden="true"></span>
+      <span class="dot" id="dot" data-state="idle" hidden aria-hidden="true"></span>
     </button>
 
     <button id="copyBtn" class="icon-btn" aria-label="Copy transcript"
@@ -94,39 +94,45 @@
   </div>
 
   <div id="prefsPanel" class="prefs-panel" hidden aria-label="Preferences">
-    <div class="prefs-row">
-      <label class="field-label" for="langSel">Language</label>
-      <select id="langSel" title="Recognition language">
-        <option value="en-US">English (US)</option><option value="en-GB">English (UK)</option>
-        <option value="es-ES">Spanish (Spain)</option><option value="fr-FR">French</option>
-        <option value="de-DE">German</option><option value="it-IT">Italian</option>
-        <option value="pt-BR">Portuguese (Brazil)</option><option value="ja-JP">Japanese</option>
-        <option value="hi-IN">Hindi</option>
-      </select>
-    </div>
-    <div class="prefs-row reading-options">
-      <label class="field-label">Appearance
-        <select id="themeSel"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
-      </label>
-      <label class="field-label">Text size
-        <select id="fontSizeSel">
-          <option value="13" selected>Default</option>
-          <option value="15">Medium</option>
-          <option value="17">Large</option>
+    <fieldset class="prefs-group">
+      <legend>Transcription</legend>
+      <div class="prefs-row">
+        <label class="field-label" for="langSel">Language</label>
+        <select id="langSel" title="Recognition language" aria-describedby="recognitionHint">
+          <option value="en-US">English (US)</option><option value="en-GB">English (UK)</option>
+          <option value="es-ES">Spanish (Spain)</option><option value="fr-FR">French</option>
+          <option value="de-DE">German</option><option value="it-IT">Italian</option>
+          <option value="pt-BR">Portuguese (Brazil)</option><option value="ja-JP">Japanese</option>
+          <option value="hi-IN">Hindi</option>
         </select>
-      </label>
-    </div>
-    <div class="checks">
-      <label class="check"><input type="checkbox" id="localOnly" checked> On-device only</label>
-      <label class="check"><input type="checkbox" id="tsToggle"> Timestamps</label>
-      <label class="check"><input type="checkbox" id="autoscroll" checked> Auto-scroll</label>
-      <label class="check"><input type="checkbox" id="selectToCopy" checked> Select to copy</label>
-      <label class="check"><input type="checkbox" id="copyToast" checked> Copy toast</label>
-    </div>
-    <label class="check mic-check"><input type="checkbox" id="includeMic" checked> Include my microphone in the saved file</label>
-    <p class="field-hint" id="micHint">Your own speech is added to the downloaded transcript only — never shown live. Needs microphone permission.</p>
-    <button id="micGrantBtn" class="mic-grant" hidden>Allow microphone…</button>
-    <p class="field-hint" id="recognitionHint">Language and on-device/cloud apply at the next Start.</p>
+      </div>
+      <label class="check"><input type="checkbox" id="localOnly" checked aria-describedby="recognitionHint"> On-device only</label>
+      <p class="field-hint" id="recognitionHint">Language and on-device/cloud apply at the next Start.</p>
+      <label class="check mic-check"><input type="checkbox" id="includeMic" checked aria-describedby="micHint"> Include my microphone in the saved file</label>
+      <p class="field-hint" id="micHint">Your own speech is added to the downloaded transcript only — never shown live. Needs microphone permission.</p>
+      <button id="micGrantBtn" class="mic-grant" hidden>Allow microphone…</button>
+    </fieldset>
+    <fieldset class="prefs-group">
+      <legend>Reading &amp; copying</legend>
+      <div class="prefs-row reading-options">
+        <label class="field-label">Appearance
+          <select id="themeSel"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
+        </label>
+        <label class="field-label">Text size
+          <select id="fontSizeSel">
+            <option value="13" selected>Default</option>
+            <option value="15">Medium</option>
+            <option value="17">Large</option>
+          </select>
+        </label>
+      </div>
+      <div class="checks">
+        <label class="check"><input type="checkbox" id="tsToggle"> Timestamps</label>
+        <label class="check"><input type="checkbox" id="autoscroll" checked> Auto-scroll</label>
+        <label class="check"><input type="checkbox" id="selectToCopy" checked> Select to copy</label>
+        <label class="check"><input type="checkbox" id="copyToast" checked> Copy toast</label>
+      </div>
+    </fieldset>
   </div>
 
   <!-- Cloud recognition sends audio to Google. That used to be a badge in the
@@ -164,6 +170,7 @@
   </main>
 
   <button id="jumpLatestBtn" class="jump-latest" hidden>↓ Back to live</button>
+  <div class="feedback-stack">
   <div id="toast" class="toast" role="status" aria-live="polite" hidden>Copied</div>
   <!--
     Delete asks first when the transcript is not on disk. Undo backs a delete,
@@ -180,6 +187,7 @@
     </span>
   </div>
   <div id="undoBar" class="undo-bar" hidden><span role="status">Transcript deleted</span><button id="undoClearBtn">Undo</button><button id="undoDismiss" aria-label="Discard recovery copy" title="Discard recovery copy">×</button></div>
+  </div>
   <script type="module" src="sidepanel.js"></script>
 </body>
 </html>

@@ -348,7 +348,7 @@ el.jumpLatest.addEventListener('click', () => {
   el.transcript.focus({preventScroll: true});
 });
 
-function makeRow(key) {
+function makeRow(key, before = null) {
   const row = document.createElement('div');
   row.className = 'seg';
   row.dataset.key = key;
@@ -363,7 +363,7 @@ function makeRow(key) {
   txt.appendChild(textNode);
 
   row.append(ts, txt);
-  el.transcript.appendChild(row);
+  el.transcript.insertBefore(row, before);
   return { row, ts, txt, textNode, text: null, isFinal: null, showTs: null };
 }
 
@@ -535,15 +535,20 @@ function render(store) {
   const showTs = el.timestamps.checked;
   const sel = transcriptSelection();
   let deferred = 0;
+  let previousRow = null;
 
   for (const seg of segs) {
     let entry = nodes.get(seg.key);
     if (!entry) {
-      // A brand-new row is appended after everything else, which cannot disturb a
-      // selection that already exists above it.
-      entry = makeRow(seg.key);
+      // Show may restore older rows before already-visible new speech. Insert
+      // only the missing rows in store order; never move an existing selected
+      // node or rebuild the transcript to repair its order.
+      const before = previousRow ? previousRow.nextElementSibling : el.transcript.querySelector('.seg');
+      entry = makeRow(seg.key, before);
       nodes.set(seg.key, entry);
-    } else if (entry.text === seg.text && entry.isFinal === seg.isFinal && entry.showTs === showTs) {
+    }
+    previousRow = entry.row;
+    if (entry.text === seg.text && entry.isFinal === seg.isFinal && entry.showTs === showTs) {
       continue; // nothing changed: do not touch the DOM at all
     }
 
@@ -1838,11 +1843,7 @@ el.clear.addEventListener('click', clear);
 el.confirmCancel.addEventListener('click', () => closeDeleteConfirm());
 el.confirmDelete.addEventListener('click', performClear);
 el.confirmSave.addEventListener('click', downloadThenClear);
-// Escape is the other way out of a question, and must never be the destructive
-// one. Bound on the bar itself, which holds focus while the question is open.
-el.confirmBar.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { e.stopPropagation(); closeDeleteConfirm(); }
-});
+
 el.undoClear.addEventListener('click', undoClear);
 el.undoDismiss.addEventListener('click', () => {
   clearedSnapshot = null;
@@ -1860,8 +1861,15 @@ el.popout.addEventListener('click', () => {
 });
 el.useCloud.addEventListener('click', useCloudInstead);
 el.retryModel.addEventListener('click', retryModel);
-el.prefsBtn.addEventListener('click', () => {
-  setPrefsOpen(el.prefsPanel.hidden);
+el.prefsBtn.addEventListener('click', (event) => {
+  const opening = el.prefsPanel.hidden;
+  setPrefsOpen(opening);
+  // Keyboard and assistive-tech activation enters the disclosed settings.
+  // Pointer activation leaves the user's transcript selection alone.
+  if (opening && event.detail === 0) {
+    el.prefsPanel.scrollTop = 0;
+    el.lang.focus({ preventScroll: true });
+  }
 });
 for (const control of [el.theme, el.fontSize]) {
   control.addEventListener('change', () => {
@@ -1871,7 +1879,15 @@ for (const control of [el.theme, el.fontSize]) {
   });
 }
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !el.prefsPanel.hidden) {
+  if (event.key !== 'Escape') return;
+  // The question is nonmodal: focus may be back in the transcript. Dismiss the
+  // most immediate choice first, without also collapsing Preferences.
+  if (!el.confirmBar.hidden) {
+    closeDeleteConfirm();
+    event.preventDefault();
+    return;
+  }
+  if (!el.prefsPanel.hidden) {
     setPrefsOpen(false);
     el.prefsBtn.focus();
     event.preventDefault();

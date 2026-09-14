@@ -26,10 +26,14 @@
   Download always means the whole transcript, even while a passage is selected.
 - Keep default-on select-to-copy and the separate optional short “Copied” toast.
   Copy confirmation must not replace recognition status or flash the transcript.
-- Keep occasional settings and Clear behind the gear. Theme, reading size, language,
-  and ergonomic preferences may remain there; they must not clutter the main view.
+- Keep occasional settings behind the gear. Theme, reading size, language, and
+  ergonomic preferences must not clutter the main view. Screen-only Clear and
+  destructive Delete live in the toolbar by the founder's later request; Delete
+  stays at the far right, apart from Clear, with confirmation for new work and Undo.
 - Preserve selection-safe updates, audible tab playback, remembered window size,
-  on-device-only default, and a recoverable Clear. No model-ready/Done banner.
+  and the on-device-only default. No model-ready/Done banner.
+- Keep the Window/Sidebar text label at every supported width. Do not hide that
+  word to fit the toolbar; reduce spacing or hide the decorative icon instead.
 - Keep a quiet way back to the live end after selecting or reviewing older text,
   without covering the words the user is trying to copy.
 
