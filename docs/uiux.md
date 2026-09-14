@@ -363,8 +363,42 @@ spot.
 Four attempts, each fixing a cause the harness could reproduce and missing the
 one the user hit. So the extension now records every step of a view switch in
 session storage — announced, handed over, claimed, armed, resumed, with the
-document that did each — readable under the gear as **Last view switch**. The
-next report of this bug can carry the sequence rather than the symptom.
+document that did each. The next report of this bug can carry the sequence
+rather than the symptom. (It was briefly shown under the gear; see below for why
+it no longer is.)
+
+## Delete asks only when the loss would be real
+
+Delete is backed by Undo, so a confirmation on every press would be friction with
+nothing behind it. But Undo is held in this document's memory and dies with it —
+so deleting a transcript that never reached disk is the one case where the work
+is genuinely unrecoverable. That case, and only that case, asks.
+
+The gate is the file, not the click: the same `hasUnsavedTranscript()` the
+Download control's highlight uses, comparing the current transcript against
+exactly what last reached disk. Download it and Delete is immediate again; say
+one more sentence after that download and it asks again, because the file is
+stale the moment the meeting continues.
+
+The question offers **Download and delete** first, because saving is almost
+always what the user actually wanted, and the delete only happens if the write
+succeeded — `download()` now reports success rather than returning `undefined`,
+so a failed save cannot take the transcript with it. Cancel and Escape both back
+out without destroying anything, and focus lands on Cancel so a stray Enter is
+never the destructive answer.
+
+## The switch log is gone from the panel
+
+The step-by-step record of a view switch stays — it costs one session-storage
+write per step and the regression suites read it — but its disclosure in the
+gear panel has been removed. It was developer output in a product whose point is
+minimalism, and it had done its job. Read it when debugging with:
+
+```js
+chrome.storage.session.get('switchLog')
+```
+
+from the panel's devtools console.
 
 ## Deliberate limits
 

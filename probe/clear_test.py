@@ -206,7 +206,11 @@ def main():
 
         # Clear WHILE that block is filling.
         print("\n=== CLEAR (mid-utterance) ===", flush=True)
-        chrome.evaluate(panel_sid, "document.getElementById('clearBtn').click()", await_promise=False)
+        chrome.evaluate(panel_sid, """(() => {
+          document.getElementById('clearBtn').click();
+          const bar = document.getElementById('confirmBar');
+          if (bar && !bar.hidden) document.getElementById('confirmDeleteBtn').click();
+        })()""", await_promise=False)
         time.sleep(0.35)
 
         immediate = transcript_text(chrome, panel_sid)
@@ -264,7 +268,11 @@ def main():
                                await_promise=False):
                 break
             time.sleep(0.5)
-        chrome.evaluate(panel_sid, "document.getElementById('clearBtn').click()", await_promise=False)
+        chrome.evaluate(panel_sid, """(() => {
+          document.getElementById('clearBtn').click();
+          const bar = document.getElementById('confirmBar');
+          if (bar && !bar.hidden) document.getElementById('confirmDeleteBtn').click();
+        })()""", await_promise=False)
         time.sleep(1.5)
         after_stop = transcript_text(chrome, panel_sid)
         checks.add("Clear works with recognition stopped", after_stop == "",

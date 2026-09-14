@@ -44,6 +44,13 @@ try:
     ui.shot('focused-cleared-screen')
     ui.js("document.getElementById('showHiddenBtn').click()")
     time.sleep(.15)
+    # The delete confirmation, on a transcript that was never downloaded.
+    ui.js("document.getElementById('clearBtn').click()")
+    time.sleep(.25)
+    ui.shot('focused-delete-confirm')
+    ui.js("document.getElementById('confirmCancelBtn').click()")
+    time.sleep(.2)
+
     # The window view, where the same control reads "Sidebar" — the way back.
     ui.js("document.body.classList.add('view-window'); "
           "document.querySelector('.popout-label').textContent='Sidebar'")
@@ -68,7 +75,7 @@ try:
     ui.shot('focused-short-preferences')
     ui.js("document.getElementById('clearBtn').scrollIntoView({block:'nearest'})")
     ui.shot('focused-clear-setting')
-    ui.js("document.getElementById('clearBtn').click()")
+    ui.delete_transcript()
     ui.size(320, 680)
     ui.shot('focused-clear-undo')
 finally:

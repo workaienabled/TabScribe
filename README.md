@@ -80,7 +80,9 @@ accessible name; none carries its meaning in colour alone.
   your own speech and merges it into the **downloaded file only**. It is never
   shown in the live transcript and never copied by Copy. See below.
 - **Delete transcript** (the red control at the far end of the row, deliberately
-  away from Clear screen): immediately removes the text, including the current
+  away from Clear screen): **asks first if the transcript has not been
+  downloaded**, offering **Download and delete** as the way out; deletes straight
+  away once the file is on disk, since Undo still backs it. It removes the text, including the current
   utterance, and keeps listening. Preferences close to reveal **Undo**, which
   restores the cleared text before anything received since.
   Only the most recent Clear is recoverable; recovery is held in this view's memory
@@ -168,6 +170,21 @@ Full logs and exact exit codes go to `artifacts/uiux/`. The known audio scripts
 are scored by word error rate, not by visual inspection. UI fixture tests are
 separate from real speech-recognition tests. `probe/focus_test.py` tests the core
 meeting-to-copy-to-download flow against real clipboard and file contents.
+
+### What the accuracy numbers do and do not cover
+
+The suite scores **96.3%** and **100.0%** word accuracy. Those numbers come from
+two synthesised single-speaker clips: clean speech, one voice, no crosstalk, no
+call-codec compression, no packet loss.
+
+**TabScribe has never been scored on a real meeting.** Multiple speakers talking
+over each other, compressed conference audio, and varying microphone quality are
+all harder than the fixtures, and none of them are represented here. Treat the
+numbers as a regression signal — they catch the transcription pipeline breaking —
+not as a prediction of what a live Zoom or Meet call will produce.
+
+Closing that gap needs real multi-speaker audio with a known reference script;
+`probe/wer.py` will score anything you point it at.
 
 After committing verified source, `python3 make-package.py` builds the
 separately named extension/source ZIPs under `artifacts/uiux/`, byte-checks every

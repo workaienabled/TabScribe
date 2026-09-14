@@ -506,7 +506,13 @@ def main():
             if stable >= 3:
                 break
             time.sleep(0.4)
-        chrome.evaluate(panel_sid, "document.getElementById('clearBtn').click()", await_promise=False)
+        # Delete asks first when the transcript is not on disk. This check is
+        # about the delete itself, so answer the question when it appears.
+        chrome.evaluate(panel_sid, """(() => {
+          document.getElementById('clearBtn').click();
+          const bar = document.getElementById('confirmBar');
+          if (bar && !bar.hidden) document.getElementById('confirmDeleteBtn').click();
+        })()""", await_promise=False)
         time.sleep(0.4)
         after = chrome.evaluate(panel_sid, "String([...document.querySelectorAll('#transcript .seg')].map(e => e.innerText).join(' ').split(/[^A-Za-z0-9'%:.-]+/).filter(Boolean).length) + ' words'",
                                 await_promise=False)

@@ -139,15 +139,6 @@ select { min-height: 28px; padding: 4px 6px; border: 1px solid var(--border); bo
 .grant-why { color: var(--muted); font-size: 12.5px; margin: 0 0 18px; }
 .grant-actions { display: flex; gap: 8px; }
 .field-hint { color: var(--muted); font-size: 11px; margin: 8px 0; }
-/* The record of the last view switch: a diagnostic, kept quiet. */
-.switch-log { margin-top: 8px; font-size: 11px; color: var(--muted); }
-.switch-log summary { cursor: pointer; }
-.switch-log pre {
-  margin: 6px 0 0; padding: 6px 8px; font-size: 10.5px; line-height: 1.45;
-  white-space: pre-wrap; word-break: break-all; user-select: text;
-  border: 1px solid var(--border); border-radius: 6px; background: var(--panel-bg);
-  max-height: 180px; overflow: auto;
-}
 #clearBtn { margin-top: 4px; }
 
 .cloud-warning { flex: none; margin: 0; padding: 5px 12px; background: var(--soft-accent);
@@ -182,6 +173,22 @@ select { min-height: 28px; padding: 4px 6px; border: 1px solid var(--border); bo
 .transcript.holding { box-shadow: inset 2px 0 var(--accent); }
 .empty { color: var(--muted); font-size: 12px; padding: 14px 2px; white-space: normal; max-width: 42ch; }
 
+/* Delete asks first when the transcript is not on disk. In normal flow, at the
+   bottom of the panel: an absolutely positioned bar covered the "Screen cleared"
+   notice, hiding the words that explain what is at stake. A question that
+   obscures other status is worse than no question. */
+.confirm-bar {
+  flex: none; order: 99;
+  display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center;
+  padding: 8px 12px; font-size: 12px;
+  border-top: 2px solid var(--danger); background: var(--surface);
+}
+.confirm-bar #confirmText { flex: 1 1 100%; }
+.confirm-actions { display: flex; gap: 6px; margin-left: auto; }
+.confirm-bar button { font-size: 11.5px; padding: 3px 10px; }
+.confirm-delete { color: var(--danger); border-color: var(--danger); }
+.confirm-save { font-weight: 600; }
+
 .undo-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-top: 1px solid var(--border); background: var(--soft-accent); font-size: 11px; }
 .undo-bar span { margin-right: auto; }
 .undo-bar button { padding: 3px 9px; background: transparent; }
@@ -202,5 +209,10 @@ button#downloadBtn.unsaved { color: var(--accent); border-color: var(--accent); 
    both readable and clickable while a copy confirmation is on screen. */
 body:has(#undoBar:not([hidden])) .toast { bottom: 88px; }
 .toast.show { opacity: .92; }
+/* The toast floats a fixed distance off the bottom, so it lands on whatever is
+   there. When Delete is asking, that is the question — and the toast covered the
+   words explaining what was at stake. Lift it clear of the bar while the
+   question is open. */
+body:has(#confirmBar:not([hidden])) .toast { bottom: 96px; }
 body { position: relative; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }

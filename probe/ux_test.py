@@ -123,17 +123,36 @@ class UI:
             "/Press Record|Ready/.test(document.getElementById('status').textContent)",
             timeout=20)
 
-    def download_and_read(self, directory):
-        """Press Download and return what was actually written to disk.
+    def delete_transcript(self, answer='confirmDeleteBtn'):
+        """Press Delete, and answer the confirmation if one appears.
+
+        Delete asks before destroying a transcript that is not on disk, so a
+        test that only wants the transcript GONE has to answer the question.
+        Suites about the question itself drive the controls directly instead.
+        """
+        self.js("document.getElementById('clearBtn').click()")
+        time.sleep(0.15)
+        self.js(f"""(() => {{
+          const bar = document.getElementById('confirmBar');
+          if (bar && !bar.hidden) document.getElementById('{answer}').click();
+        }})()""")
+        time.sleep(0.2)
+
+    def download_and_read(self, directory, trigger='downloadBtn'):
+        """Press a control that downloads, and return what reached disk.
 
         A fresh subdirectory per call, so an overwritten same-name file cannot be
         mistaken for a new download and a stale file cannot satisfy a later read.
+
+        `trigger` names the control: Download itself, or any other control whose
+        job includes writing the file (the delete confirmation's save-first
+        action, for one) — the point is to read the REAL bytes either way.
         """
         destination = Path(directory) / f'dl-{len(self.checks)}-{int(time.time() * 1000)}'
         destination.mkdir(parents=True)
         self.chrome.send('Browser.setDownloadBehavior', behavior='allow',
                          downloadPath=str(destination))
-        self.js("document.getElementById('downloadBtn').click()")
+        self.js(f"document.getElementById('{trigger}').click()")
         for _ in range(40):
             files = [p for p in destination.iterdir() if p.suffix == '.txt']
             if files and files[0].stat().st_size > 0:
@@ -284,7 +303,8 @@ def navigation(ui):
 def undo(ui):
     ui.fixture(3)
     ui.capture_store()
-    ui.js("window.oldText=fixtureStore.toText(); document.getElementById('clearBtn').click()")
+    ui.js("window.oldText=fixtureStore.toText()")
+    ui.delete_transcript()
     ui.check('Clear still removes all transcript immediately', ui.js("document.querySelectorAll('.seg').length === 0 && fixtureStore.isEmpty()"))
     exists = ui.js("!!document.getElementById('undoClearBtn') && !document.getElementById('undoBar').hidden")
     ui.check('Clear offers a visible Undo', exists)
@@ -295,7 +315,8 @@ def undo(ui):
     ui.js("fixtureStore.update(0, 'New words finalized after undo.', true, 20000); document.getElementById('tsToggle').dispatchEvent(new Event('change'))")
     ui.check('live result keys still update correctly after Undo', ui.js("fixtureStore.toText() === oldText + ' New words finalized after undo.' && document.querySelectorAll('.seg').length === 4"))
     ui.check('Undo is single-use', ui.js("document.getElementById('undoBar').hidden"))
-    ui.js("document.getElementById('copyToast').checked=false; document.getElementById('copyToast').dispatchEvent(new Event('change')); document.getElementById('clearBtn').click()")
+    ui.js("document.getElementById('copyToast').checked=false; document.getElementById('copyToast').dispatchEvent(new Event('change'))")
+    ui.delete_transcript()
     ui.check('copy-toast preference cannot hide recovery action', ui.js("!document.getElementById('undoBar').hidden"))
     ui.js("document.getElementById('undoDismiss').click()")
     ui.check('dismiss leaves transcript cleared', ui.js("document.getElementById('undoBar').hidden && fixtureStore.isEmpty()"))

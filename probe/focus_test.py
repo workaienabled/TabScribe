@@ -112,7 +112,9 @@ def focus(ui):
     ui.check('Back to live is contextual and never overlaps transcript text', ui.js("(() => {const b=document.getElementById('jumpLatestBtn'),r=b.getBoundingClientRect(),t=document.getElementById('transcript').getBoundingClientRect();return !b.hidden && b.textContent.includes('Back to live') && r.top>=t.bottom;})()"))
     click(ui,'prefsBtn')
     ui.js("document.getElementById('clearBtn').scrollIntoView({block:'nearest'})")
-    click(ui,'clearBtn')
+    # Delete asks first when nothing has been downloaded; this check is about
+    # what happens AFTER the delete, so answer the question.
+    ui.delete_transcript()
     ui.check('Clear closes Preferences so the recovery action is visible', ui.js("document.getElementById('prefsPanel').hidden && !document.getElementById('undoBar').hidden"))
 
 

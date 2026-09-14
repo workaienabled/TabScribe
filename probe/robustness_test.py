@@ -135,6 +135,8 @@ def review(ui):
     ui.js("""(() => {
       document.getElementById('prefsBtn').click();
       document.getElementById('clearBtn').click();
+      const bar = document.getElementById('confirmBar');
+      if (bar && !bar.hidden) document.getElementById('confirmDeleteBtn').click();
     })()""")
     time.sleep(.3)
     ui.check('Clear offers Undo before the hand-off',
@@ -150,7 +152,7 @@ def review(ui):
     ui.chrome.wait_for_js(ui.sid, "document.getElementById('status').textContent.length > 0")
     ui.fixture(2)
     ui.capture_store()
-    ui.js("document.getElementById('clearBtn').click()")
+    ui.delete_transcript()
     time.sleep(.4)
     stored = ui.js("(async () => (await chrome.storage.local.get('prefs')).prefs.prefsOpen)()")
     ui.check('Clear does not rewrite the stored Preferences-open choice', stored is True, stored)

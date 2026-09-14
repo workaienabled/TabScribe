@@ -196,7 +196,14 @@ def main():
         if back:
             bsid = chrome.attach(back['targetId'])
             chrome.wait_for_js(bsid, "!!document.getElementById('recordBtn')", timeout=30)
-            time.sleep(1.5)
+            # Wait for the hand-off to actually land, not for a guess at how long
+            # it takes. A fixed sleep passed alone and failed under full-suite
+            # load — the same mistake the product itself made with a 2500ms timer.
+            try:
+                chrome.wait_for_js(bsid, "document.querySelectorAll('.seg').length > 0",
+                                   timeout=25)
+            except RuntimeError:
+                pass  # let the assertion below report the real state
             restored = chrome.evaluate(bsid, """({
               segs: document.querySelectorAll('.seg').length,
               text: document.getElementById('transcript').innerText.slice(0, 60),

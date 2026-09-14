@@ -127,13 +127,6 @@
     <p class="field-hint" id="micHint">Your own speech is added to the downloaded transcript only — never shown live. Needs microphone permission.</p>
     <button id="micGrantBtn" class="mic-grant" hidden>Allow microphone…</button>
     <p class="field-hint" id="recognitionHint">Language and on-device/cloud apply at the next Start.</p>
-    <!-- What happened at the last view switch, step by step. Shown only after a
-         switch, and there so a failure can be reported with facts instead of a
-         guess about the cause. -->
-    <details id="switchLog" class="switch-log" hidden>
-      <summary>Last view switch</summary>
-      <pre id="switchLogText"></pre>
-    </details>
   </div>
 
   <!-- Cloud recognition sends audio to Google. That used to be a badge in the
@@ -172,6 +165,20 @@
 
   <button id="jumpLatestBtn" class="jump-latest" hidden>↓ Back to live</button>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden>Copied</div>
+  <!--
+    Delete asks first when the transcript is not on disk. Undo backs a delete,
+    but Undo lives in this document's memory and dies with it, so an
+    undownloaded delete is the one genuinely unrecoverable case. The remedy is
+    usually "save it first", so the question offers that as an action.
+  -->
+  <div id="confirmBar" class="confirm-bar" role="alertdialog" aria-labelledby="confirmText" hidden>
+    <span id="confirmText">This transcript has not been downloaded. Delete it?</span>
+    <span class="confirm-actions">
+      <button id="confirmSaveBtn" class="confirm-save">Download and delete</button>
+      <button id="confirmDeleteBtn" class="confirm-delete danger">Delete</button>
+      <button id="confirmCancelBtn" class="confirm-cancel">Cancel</button>
+    </span>
+  </div>
   <div id="undoBar" class="undo-bar" hidden><span role="status">Transcript deleted</span><button id="undoClearBtn">Undo</button><button id="undoDismiss" aria-label="Discard recovery copy" title="Discard recovery copy">×</button></div>
   <script type="module" src="sidepanel.js"></script>
 </body>

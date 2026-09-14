@@ -32,6 +32,10 @@ const el = {
   cloudWarning: document.getElementById('cloudWarning'),
   clear: document.getElementById('clearBtn'),
   undoBar: document.getElementById('undoBar'),
+  confirmBar: document.getElementById('confirmBar'),
+  confirmSave: document.getElementById('confirmSaveBtn'),
+  confirmDelete: document.getElementById('confirmDeleteBtn'),
+  confirmCancel: document.getElementById('confirmCancelBtn'),
   undoClear: document.getElementById('undoClearBtn'),
   undoDismiss: document.getElementById('undoDismiss'),
   popout: document.getElementById('popoutBtn'),
@@ -183,7 +187,6 @@ async function switchLog(step, detail) {
     lines.push(line);
     await chrome.storage.session.set({ [SWITCH_LOG_KEY]: lines.slice(-SWITCH_LOG_MAX) });
   } catch (e) { /* logging must never break the thing it logs */ }
-  renderSwitchLog();
 }
 
 async function switchLogReset(step) {
@@ -191,17 +194,11 @@ async function switchLogReset(step) {
   await switchLog(step);
 }
 
-async function renderSwitchLog() {
-  const box = document.getElementById('switchLog');
-  const text = document.getElementById('switchLogText');
-  if (!box || !text) return;
-  try {
-    const stored = await chrome.storage.session.get(SWITCH_LOG_KEY);
-    const lines = Array.isArray(stored[SWITCH_LOG_KEY]) ? stored[SWITCH_LOG_KEY] : [];
-    box.hidden = lines.length === 0;
-    text.textContent = lines.join('\n');
-  } catch (e) { /* ignore */ }
-}
+// Deliberately no on-screen renderer. The record below is kept — it costs one
+// session-storage write per step and is what the regression suites read — but
+// it is developer output, and this panel is meant to be minimal. Read it with:
+//   chrome.storage.session.get('switchLog')
+// from the panel's devtools console.
 
 async function armCapture({ retries = 0 } = {}) {
   if (armed) return { ok: true };
@@ -1690,7 +1687,7 @@ function download() {
   // Download is the one place the microphone appears: the live view and Copy
   // stay exactly as they were.
   const text = transcriptForSaving();
-  if (!text) { setStatus('Nothing to download yet.'); return; }
+  if (!text) { setStatus('Nothing to download yet.'); return false; }
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const name = `transcript-${stamp}.txt`;
   let url = null;
@@ -1706,7 +1703,7 @@ function download() {
     if (url) { try { URL.revokeObjectURL(url); } catch (e2) { /* nothing to revoke */ } }
     setStatus(`Could not save the transcript: ${e && e.message ? e.message : e}. `
       + 'Use Copy and paste it somewhere safe.', true);
-    return;
+    return false;
   }
   setTimeout(() => URL.revokeObjectURL(url), 5000);
   // Remember exactly what reached the disk, so the close warning can tell the
@@ -1717,6 +1714,7 @@ function download() {
   confirmAction('Downloaded', withMic
     ? `Downloaded ${name}, including your microphone.`
     : `Downloaded ${name}`);
+  return true;
 }
 
 // Only the most recent Clear is recoverable, in this view's memory. It is never
@@ -1737,7 +1735,50 @@ function undoClear() {
   el.transcript.focus({preventScroll: true});
 }
 
+/**
+ * Delete, asked for.
+ *
+ * Undo backs every delete, but Undo is held in this document's memory and dies
+ * with it, so deleting a transcript that never reached disk is the one case
+ * where the work is genuinely unrecoverable. That case asks first; every other
+ * case deletes immediately, because a confirmation that fires when nothing is
+ * at stake is how people learn to click through confirmations.
+ *
+ * The question offers the remedy, not just the warning: downloading first is
+ * almost always what the user actually wanted.
+ */
 function clear() {
+  if (hasUnsavedTranscript()) {
+    openDeleteConfirm();
+    return;
+  }
+  performClear();
+}
+
+function openDeleteConfirm() {
+  el.confirmBar.hidden = false;
+  el.clear.setAttribute('aria-expanded', 'true');
+  // Focus the safe choice: a keyboard Enter on an open question must not delete.
+  el.confirmCancel.focus({ preventScroll: true });
+}
+
+function closeDeleteConfirm({ refocus = true } = {}) {
+  el.confirmBar.hidden = true;
+  el.clear.setAttribute('aria-expanded', 'false');
+  if (refocus) el.transcript.focus({ preventScroll: true });
+}
+
+function downloadThenClear() {
+  // Only delete once the file is genuinely on its way: download() reports
+  // failure, and a failed save must never take the transcript with it. The
+  // question stays open in that case, with its own error already on screen.
+  if (!download()) return;
+  closeDeleteConfirm({ refocus: false });
+  performClear();
+}
+
+function performClear() {
+  closeDeleteConfirm({ refocus: false });
   // Delete lives in the control row now, so there is no preferences panel to
   // collapse. It is still closed if the user happens to have it open, because
   // Undo appears at the bottom of the panel and a covered Undo is a lost one.
@@ -1794,6 +1835,14 @@ el.record.addEventListener('click', () => {
 el.copy.addEventListener('click', copy);
 el.download.addEventListener('click', download);
 el.clear.addEventListener('click', clear);
+el.confirmCancel.addEventListener('click', () => closeDeleteConfirm());
+el.confirmDelete.addEventListener('click', performClear);
+el.confirmSave.addEventListener('click', downloadThenClear);
+// Escape is the other way out of a question, and must never be the destructive
+// one. Bound on the bar itself, which holds focus while the question is open.
+el.confirmBar.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { e.stopPropagation(); closeDeleteConfirm(); }
+});
 el.undoClear.addEventListener('click', undoClear);
 el.undoDismiss.addEventListener('click', () => {
   clearedSnapshot = null;
@@ -1812,7 +1861,6 @@ el.popout.addEventListener('click', () => {
 el.useCloud.addEventListener('click', useCloudInstead);
 el.retryModel.addEventListener('click', retryModel);
 el.prefsBtn.addEventListener('click', () => {
-  renderSwitchLog();
   setPrefsOpen(el.prefsPanel.hidden);
 });
 for (const control of [el.theme, el.fontSize]) {

@@ -244,15 +244,14 @@ def main():
                        'survivor claim' in joined and '"received":true' in joined)
             checks.add('and recording resuming',
                        'resume start ok' in joined)
-            checks.add('the log is visible under the gear',
-                       chrome.evaluate(s, """(() => {
-                         document.getElementById('prefsBtn').click();
-                         const box = document.getElementById('switchLog');
-                         const shown = !!box && !box.hidden
-                           && document.getElementById('switchLogText').textContent.length > 0;
-                         document.getElementById('prefsBtn').click();
-                         return shown;
-                       })()""", await_promise=False))
+            # The log is no longer shown in the panel — it is developer output,
+            # and this UI is meant to be minimal. The RECORD must still exist
+            # (read via chrome.storage.session), which the checks above assert,
+            # and it must NOT be rendered, which this one does.
+            checks.add('the log is kept out of the panel UI',
+                       chrome.evaluate(s, """(() => (!document.getElementById('switchLog')
+                                                && !document.getElementById('switchLogText')))()""",
+                                       await_promise=False))
     finally:
         try:
             chrome.kill()
