@@ -139,6 +139,15 @@ select { min-height: 28px; padding: 4px 6px; border: 1px solid var(--border); bo
 .grant-why { color: var(--muted); font-size: 12.5px; margin: 0 0 18px; }
 .grant-actions { display: flex; gap: 8px; }
 .field-hint { color: var(--muted); font-size: 11px; margin: 8px 0; }
+/* The record of the last view switch: a diagnostic, kept quiet. */
+.switch-log { margin-top: 8px; font-size: 11px; color: var(--muted); }
+.switch-log summary { cursor: pointer; }
+.switch-log pre {
+  margin: 6px 0 0; padding: 6px 8px; font-size: 10.5px; line-height: 1.45;
+  white-space: pre-wrap; word-break: break-all; user-select: text;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--panel-bg);
+  max-height: 180px; overflow: auto;
+}
 #clearBtn { margin-top: 4px; }
 
 .cloud-warning { flex: none; margin: 0; padding: 5px 12px; background: var(--soft-accent);

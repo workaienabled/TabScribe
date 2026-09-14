@@ -293,6 +293,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // relying on the window's own close to do it.
         await chrome.storage.session.remove(WINDOW_KEY);
         sendResponse({ ok: true, tabId });
+        // A surviving panel document (one sidePanel.close() failed to remove)
+        // never re-runs init(), so it is told directly that the snapshot is
+        // ready. Fresh documents ignore this: nothing was handed off to them
+        // yet, and init() claims it. No listener is not an error.
+        chrome.runtime.sendMessage({ type: 'SWITCHED_BACK' }).catch(() => {});
       } catch (e) {
         sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
       }

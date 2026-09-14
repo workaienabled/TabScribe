@@ -292,6 +292,38 @@ delayed**, because the first version of this suite only ever exercised a fast
 teardown and therefore could not see the timer bug. A timing fix whose test
 cannot fail when the timing is wrong is not a test of anything.
 
+### The fourth cause: the panel document that never went away
+
+After three fixes the user still saw recording stop. Every one of those fixes
+lived inside `init()`, on the assumption that pressing Sidebar creates a **new**
+panel document. It usually does — but not always.
+
+`popOut()` asks the worker to close the panel with `sidePanel.close()`, and that
+call is best-effort: it can fail, and some Chrome builds do not have it. When it
+fails, the old panel document stays alive behind the window, inert, with
+`handedOff = true`. Pressing Sidebar then re-shows **that** document. No new
+document is created, `init()` never runs, nothing claims the snapshot, and the
+old document's focus handler takes the tab back with *"Press Record to
+transcribe"* — the meeting has stopped with a stale transcript on screen.
+
+The harness never showed this because `sidePanel.close()` works there. The suite
+now forces the survivor by asking `OPEN_WINDOW` not to close the panel, which
+reproduces exactly what a failed close leaves behind, and was red at 7/10.
+
+The fix is a second entry point: `reclaimAfterSwitch()`, on the surviving
+document, does what `init()` would have — waits for the announced hand-off,
+claims it, re-arms, resumes. The worker broadcasts `SWITCHED_BACK` the moment it
+stores the snapshot, so the survivor acts without depending on focus. Verified
+load-bearing: with the broadcast removed, the survivor stays at `stopped`.
+
+### The switch log
+
+Four attempts, each fixing a cause the harness could reproduce and missing the
+one the user hit. So the extension now records every step of a view switch in
+session storage — announced, handed over, claimed, armed, resumed, with the
+document that did each — readable under the gear as **Last view switch**. The
+next report of this bug can carry the sequence rather than the symptom.
+
 ## Deliberate limits
 
 No Find, transcript library, built-in AI, recording upload, automatic cloud

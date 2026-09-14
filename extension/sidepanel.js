@@ -128,6 +128,46 @@ let handedOff = false;
 // plausible recognizer flush.
 const SWITCH_HANDOFF_WAIT_MS = 20000;
 
+/**
+ * A step-by-step record of the last view switch, kept in session storage so it
+ * survives the document swap the switch itself causes. Four attempts at fixing
+ * "recording stops when I switch back" each fixed a cause the harness could
+ * reproduce and missed the one the user hit; this exists so the next report can
+ * carry facts. Read from the gear panel, under "Last view switch".
+ */
+const SWITCH_LOG_KEY = 'switchLog';
+const SWITCH_LOG_MAX = 40;
+const docTag = IS_WINDOW ? 'window' : `panel:${Math.random().toString(36).slice(2, 6)}`;
+
+async function switchLog(step, detail) {
+  const line = `${new Date().toISOString().slice(11, 23)} ${docTag} ${step}`
+    + (detail ? ` ${typeof detail === 'string' ? detail : JSON.stringify(detail)}` : '');
+  try {
+    const stored = await chrome.storage.session.get(SWITCH_LOG_KEY);
+    const lines = Array.isArray(stored[SWITCH_LOG_KEY]) ? stored[SWITCH_LOG_KEY] : [];
+    lines.push(line);
+    await chrome.storage.session.set({ [SWITCH_LOG_KEY]: lines.slice(-SWITCH_LOG_MAX) });
+  } catch (e) { /* logging must never break the thing it logs */ }
+  renderSwitchLog();
+}
+
+async function switchLogReset(step) {
+  try { await chrome.storage.session.set({ [SWITCH_LOG_KEY]: [] }); } catch (e) { /* ignore */ }
+  await switchLog(step);
+}
+
+async function renderSwitchLog() {
+  const box = document.getElementById('switchLog');
+  const text = document.getElementById('switchLogText');
+  if (!box || !text) return;
+  try {
+    const stored = await chrome.storage.session.get(SWITCH_LOG_KEY);
+    const lines = Array.isArray(stored[SWITCH_LOG_KEY]) ? stored[SWITCH_LOG_KEY] : [];
+    box.hidden = lines.length === 0;
+    text.textContent = lines.join('\n');
+  } catch (e) { /* ignore */ }
+}
+
 async function armCapture({ retries = 0 } = {}) {
   if (armed) return { ok: true };
   try {
@@ -884,6 +924,7 @@ function setPopoutLabel(text) {
 async function backToSidebar(pendingOpen) {
   el.popout.disabled = true;
   const wasRunning = !!transcriber?.running;
+  await switchLogReset(`backToSidebar running=${wasRunning}`);
   try {
     setStatus('Returning to the sidebar…');
 
@@ -896,7 +937,8 @@ async function backToSidebar(pendingOpen) {
     // meeting.
     try {
       await chrome.runtime.sendMessage({ type: 'SWITCH_PENDING', resume: wasRunning });
-    } catch (e) { /* the panel will fall back to the autosave */ }
+      switchLog('announced SWITCH_PENDING');
+    } catch (e) { switchLog('SWITCH_PENDING failed', String(e)); }
 
     // Release the capture: the tab can only be captured once, so the panel
     // cannot arm until this window lets go.
@@ -906,16 +948,23 @@ async function backToSidebar(pendingOpen) {
     const snapshot = transcriber ? transcriber.store.serialize() : null;
     await teardown();
 
-    // Hand the transcript over. The panel is waiting on exactly this.
-    await chrome.runtime.sendMessage({
+    // Hand the transcript over. The panel is waiting on exactly this. Logged
+    // BEFORE the send: the worker broadcasts SWITCHED_BACK as it stores the
+    // snapshot, the survivor resumes, and this window can be closing before a
+    // post-send log line would land.
+    await switchLog('BACK_TO_PANEL sending', {segments: snapshot?.segments?.length ?? 0,
+                                              resume: wasRunning});
+    const handed = await chrome.runtime.sendMessage({
       type: 'BACK_TO_PANEL',
       snapshot,
       resume: wasRunning,
     });
+    await switchLog('BACK_TO_PANEL sent', {ok: !!handed?.ok});
 
     // The open was started synchronously in the click handler, above any await,
     // because the gesture cannot survive this function's awaits.
     const opened = await pendingOpen;
+    switchLog('sidePanel.open result', opened);
     if (!opened?.ok) {
       // A failed switch must not leave the user with a dead window.
       await armCapture();
@@ -957,6 +1006,7 @@ function requestSidebarOpen() {
 async function popOut() {
   el.popout.disabled = true;
   const wasRunning = !!transcriber?.running;
+  await switchLogReset(`popOut running=${wasRunning}`);
   try {
     setStatus('Opening window…');
 
@@ -986,6 +1036,8 @@ async function popOut() {
       height: prefs.get().windowHeight,
     });
 
+    switchLog('OPEN_WINDOW reply', {ok: !!res?.ok, reused: !!res?.reused,
+                                      panelClosed: !!res?.panelClosed, error: res?.error});
     if (!res?.ok) {
       // Re-arm here so a failed pop-out does not leave the user with nothing.
       handedOff = false;
@@ -1165,12 +1217,14 @@ async function start({ gesture = false, allowMic = false } = {}) {
     setRecording(true);
     el.record.disabled = false;
     setStatus('Listening. Select any text to copy part of it.');
+    if (allowMic) switchLog('resume start ok');
 
     // Strictly after the meeting transcription is live, and never awaited into
     // its failure path: the microphone is a bonus for the saved file and must
     // not be able to break, delay, or fail the thing the user actually asked for.
     attachMic(pendingMic, lang, localOnly);
   } catch (e) {
+    if (allowMic) switchLog('resume start FAILED', String(e && e.message ? e.message : e));
     setState('error');
     setStatus(String(e && e.message ? e.message : e), true);
     // The meeting failed to start, so release a microphone opened for it.
@@ -1233,21 +1287,71 @@ async function stop() {
 // Release the capture when the panel goes away, so the tab is not held open.
 window.addEventListener('pagehide', () => { teardown(); });
 
-// After popping out, this document deliberately holds no capture. When the user
-// comes back to it (typically because they closed the window), take the tab back
-// rather than sitting there inert.
-if (!IS_WINDOW) {
-  window.addEventListener('focus', async () => {
-    if (armed || !handedOff) return;
-    const cap = await armCapture();
-    if (cap.ok) {
-      handedOff = false; // this document owns the tab again
-      el.record.disabled = false;
-      el.popout.disabled = false;
-      setPopoutLabel('Open in window');
-      setStatus('Back in the side panel. Press Record to transcribe this tab.');
+/**
+ * The surviving panel document's way back.
+ *
+ * popOut() asks the worker to close this panel, but sidePanel.close() is
+ * best-effort: it can fail, and some Chrome builds lack it. When it fails this
+ * document stays alive behind the window, inert, with handedOff = true — and
+ * when the user presses Sidebar, Chrome re-shows THIS document instead of
+ * creating a new one. init() never runs again, so nothing inside init() can
+ * carry the meeting back. Every earlier fix lived there, which is why none of
+ * them could reach this case.
+ *
+ * So the switch back is handled here as well: claim the hand-off, take the tab
+ * back, and resume if the window was recording. Triggered by the worker the
+ * moment BACK_TO_PANEL lands (the reliable path), and by focus as a fallback.
+ */
+let reclaiming = false;
+async function reclaimAfterSwitch({ viaFocus = false } = {}) {
+  if (IS_WINDOW || armed || !handedOff || reclaiming) return;
+  reclaiming = true;
+  switchLog('survivor reclaim', {viaFocus});
+  try {
+    // Wait for the hand-off the window announced, exactly as init() does.
+    let wait = 0;
+    try {
+      const pending = await chrome.runtime.sendMessage({ type: 'GET_SWITCH_PENDING' });
+      if (pending?.ok && pending.pending) wait = SWITCH_HANDOFF_WAIT_MS;
+    } catch (e) { /* no answer: claim once, without waiting */ }
+    if (wait) setStatus('Bringing the transcript back…');
+    const handoff = await claimHandoff({ waitMs: wait });
+    switchLog('survivor claim', {waited: wait, ...handoff});
+
+    // The window may still be releasing the tab; the same retry init() uses.
+    const cap = await armCapture({ retries: handoff.received ? 6 : 0 });
+    switchLog('survivor arm', cap);
+    if (!cap.ok) {
+      if (viaFocus && !handoff.received) return; // nothing changed; stay inert
+      setStatus(cap.error || 'Could not take this tab back.', true);
+      return;
     }
+    handedOff = false; // this document owns the tab again
+    el.record.disabled = false;
+    el.popout.disabled = false;
+    setPopoutLabel('Open in window');
+
+    if (handoff.resume) {
+      await start({ allowMic: true });
+      return;
+    }
+    setStatus(handoff.received
+      ? 'Back in the sidebar. Press Record to continue transcribing.'
+      : 'Back in the side panel. Press Record to transcribe this tab.');
+  } finally {
+    reclaiming = false;
+  }
+}
+
+if (!IS_WINDOW) {
+  // The reliable trigger: the worker tells every panel document when the window
+  // has handed off, whether or not this one ever receives focus.
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg?.type === 'SWITCHED_BACK') reclaimAfterSwitch();
   });
+  // Fallback for the case the message predates: the user closed the window by
+  // hand and came back to an inert panel.
+  window.addEventListener('focus', () => { reclaimAfterSwitch({ viaFocus: true }); });
 }
 
 /* ------------------------------------------------------------------- output */
@@ -1642,6 +1746,7 @@ el.popout.addEventListener('click', () => {
 el.useCloud.addEventListener('click', useCloudInstead);
 el.retryModel.addEventListener('click', retryModel);
 el.prefsBtn.addEventListener('click', () => {
+  renderSwitchLog();
   setPrefsOpen(el.prefsPanel.hidden);
 });
 for (const control of [el.theme, el.fontSize]) {
@@ -1787,6 +1892,9 @@ async function previewModelState() {
   // lost meeting.
   if (handoffWait) setStatus('Bringing the transcript back…');
   let handoff = await claimHandoff({ waitMs: handoffWait });
+  if (handoffWait || handoff.received) {
+    switchLog('init claim', {waited: handoffWait, ...handoff});
+  }
 
   // A pop-out hand-off carries its own text; otherwise pick up whatever the last
   // panel document left behind. Closing the side panel destroys it without any
@@ -1801,6 +1909,7 @@ async function previewModelState() {
   // the other view may still be releasing the tab. Every other caller wants the
   // immediate answer.
   const cap = await armCapture({ retries: handoff.received ? 6 : 0 });
+  if (handoff.received) switchLog('init arm', cap);
 
   if (!cap.ok) {
     // A restored transcript is still here even when this tab cannot be captured

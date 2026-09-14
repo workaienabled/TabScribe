@@ -127,6 +127,13 @@
     <p class="field-hint" id="micHint">Your own speech is added to the downloaded transcript only — never shown live. Needs microphone permission.</p>
     <button id="micGrantBtn" class="mic-grant" hidden>Allow microphone…</button>
     <p class="field-hint" id="recognitionHint">Language and on-device/cloud apply at the next Start.</p>
+    <!-- What happened at the last view switch, step by step. Shown only after a
+         switch, and there so a failure can be reported with facts instead of a
+         guess about the cause. -->
+    <details id="switchLog" class="switch-log" hidden>
+      <summary>Last view switch</summary>
+      <pre id="switchLogText"></pre>
+    </details>
   </div>
 
   <!-- Cloud recognition sends audio to Google. That used to be a badge in the
