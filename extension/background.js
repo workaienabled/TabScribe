@@ -25,6 +25,12 @@ const TARGET_KEY = 'targetTabId';
 const WINDOW_KEY = 'popoutWindowId';
 const HANDOFF_KEY = 'handoffSnapshot';
 const MIC_PAGE_SHOWN_KEY = 'micPageShown';
+// Set by the window the moment it starts switching back, cleared when the panel
+// claims the snapshot. The TTL only guards against a switch that died halfway:
+// it must comfortably exceed a slow recognizer flush, or it reintroduces the
+// very race it exists to close.
+const SWITCH_KEY = 'switchPending';
+const SWITCH_TTL_MS = 30000;
 
 async function disableAutoOpen() {
   // Must stay false: with true, Chrome opens the panel itself and the click no
@@ -282,10 +288,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             });
           } catch (e) { /* the tab may be gone; the panel will say so */ }
         }
-        // WINDOW_KEY is deliberately NOT removed here. The panel reads it on
-        // load to decide whether to wait for this snapshot; clearing it first
-        // would make the panel skip the wait and miss the hand-off. The window
-        // closing right after clears it via windows.onRemoved.
+        // The panel no longer reads WINDOW_KEY to decide whether to wait — the
+        // SWITCH_PENDING flag says so explicitly — so clear it here rather than
+        // relying on the window's own close to do it.
+        await chrome.storage.session.remove(WINDOW_KEY);
         sendResponse({ ok: true, tabId });
       } catch (e) {
         sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
@@ -294,14 +300,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // Is a pop-out window currently on record? The side panel asks on load: a
-  // window still registered means this panel was very likely opened by the
-  // Sidebar switch, whose snapshot lands moments later.
-  if (msg?.type === 'GET_POPOUT_WINDOW') {
+  // The window is switching back and is about to tear down. It says so before
+  // the teardown, because the panel opens immediately and would otherwise have
+  // to guess how long to wait for a snapshot that arrives only afterwards.
+  if (msg?.type === 'SWITCH_PENDING') {
     (async () => {
       try {
-        const stored = await chrome.storage.session.get(WINDOW_KEY);
-        sendResponse({ ok: true, windowId: stored[WINDOW_KEY] });
+        await chrome.storage.session.set({
+          [SWITCH_KEY]: { at: Date.now(), resume: !!msg.resume },
+        });
+        sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
+      }
+    })();
+    return true;
+  }
+
+  // Is a hand-off actually on its way? The side panel asks on load and waits for
+  // the snapshot only when the answer is yes. A stale flag is ignored: a switch
+  // that never completed must not stall the next ordinary open.
+  if (msg?.type === 'GET_SWITCH_PENDING') {
+    (async () => {
+      try {
+        const stored = await chrome.storage.session.get(SWITCH_KEY);
+        const entry = stored[SWITCH_KEY];
+        const fresh = !!entry && (Date.now() - entry.at) < SWITCH_TTL_MS;
+        if (entry && !fresh) await chrome.storage.session.remove(SWITCH_KEY);
+        sendResponse({ ok: true, pending: fresh });
       } catch (e) {
         sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
       }
@@ -317,6 +343,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const stored = await chrome.storage.session.get(HANDOFF_KEY);
         await chrome.storage.session.remove(HANDOFF_KEY);
         const payload = stored[HANDOFF_KEY] || null;
+        // The switch is complete once its snapshot has been claimed; leaving the
+        // flag set would make the next ordinary panel open wait for nothing.
+        if (payload) await chrome.storage.session.remove(SWITCH_KEY);
         sendResponse({
           ok: true,
           snapshot: payload ? payload.snapshot : null,

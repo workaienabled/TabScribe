@@ -215,6 +215,64 @@ def main():
                    in_panel['mic'] == 'recording', json.dumps(in_panel))
         checks.add('and the transcript came with it',
                    in_panel['segs'] > 0, json.dumps(in_panel))
+
+        # --- the same switch, with a teardown that takes its time ------------
+        # The window writes its snapshot only AFTER stopping the recognizer and
+        # releasing the capture. On a warm model with a short clip that takes
+        # well under a second; a real meeting's final flush, on a busy machine,
+        # takes several. If the panel waits a fixed interval it gives up, falls
+        # through to the autosave — which carries text but no resume flag — and
+        # the meeting silently ends with the transcript still on screen.
+        #
+        # Delaying the hand-off message reproduces that without pretending to
+        # know the real number. The panel must wait for the snapshot, not for a
+        # timer.
+        real_click(chrome, bsid, 'popoutBtn')
+        time.sleep(6)
+        win2 = find_target(chrome, 'sidepanel.html?view=window')
+        checks.add('the window opens again', bool(win2))
+        if not win2:
+            return checks.finish()
+        w2sid = chrome.attach(win2['targetId'])
+        chrome.wait_for_js(w2sid, "!!document.getElementById('recordBtn')", timeout=30)
+        try:
+            chrome.wait_for_js(w2sid, "document.getElementById('dot').dataset.state === 'listening'",
+                               timeout=45)
+        except RuntimeError:
+            pass
+        time.sleep(2)
+
+        chrome.evaluate(w2sid, """(() => {
+          const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+          chrome.runtime.sendMessage = (msg, ...rest) => {
+            if (msg && msg.type === 'BACK_TO_PANEL') {
+              return new Promise((resolve) => setTimeout(
+                () => resolve(send(msg, ...rest)), 4000));
+            }
+            return send(msg, ...rest);
+          };
+          return true;
+        })()""", await_promise=False)
+
+        real_click(chrome, w2sid, 'popoutBtn')
+        time.sleep(12)
+        back2 = find_target(chrome, 'sidepanel.html', exclude='view=window')
+        checks.add('the sidebar opens despite the slow hand-off', bool(back2))
+        if back2:
+            b2sid = chrome.attach(back2['targetId'])
+            chrome.wait_for_js(b2sid, "!!document.getElementById('recordBtn')", timeout=30)
+            try:
+                chrome.wait_for_js(b2sid, "document.getElementById('dot').dataset.state === 'listening'",
+                                   timeout=45)
+            except RuntimeError:
+                pass
+            time.sleep(2)
+            slow = state_of(chrome, b2sid)
+            checks.add('recording survives a slow teardown',
+                       slow['pressed'] == 'true' and slow['dot'] == 'listening',
+                       json.dumps(slow))
+            checks.add('and so does the microphone',
+                       slow['mic'] == 'recording', json.dumps(slow))
     finally:
         try:
             chrome.kill()

@@ -122,6 +122,12 @@ let armed = false;
 // "Stopped." and re-enable controls this document no longer owns.
 let handedOff = false;
 
+// How long the side panel will wait for a hand-off the window has ANNOUNCED.
+// This is a ceiling on a wait that normally ends the moment the snapshot lands,
+// not a guess at how long a teardown takes — it only has to outlast the slowest
+// plausible recognizer flush.
+const SWITCH_HANDOFF_WAIT_MS = 20000;
+
 async function armCapture({ retries = 0 } = {}) {
   if (armed) return { ok: true };
   try {
@@ -881,7 +887,18 @@ async function backToSidebar(pendingOpen) {
   try {
     setStatus('Returning to the sidebar…');
 
-    // Release the capture first: the tab can only be captured once, so the panel
+    // Announce the switch BEFORE tearing anything down. The panel opens straight
+    // away — sidePanel.open() has to fire inside the click to keep the gesture —
+    // so it can be up and running long before the snapshot below is written.
+    // This tells it a hand-off is genuinely coming and to wait for it, however
+    // long the recognizer's final flush takes. Waiting on a fixed timer instead
+    // is what let a slow teardown drop the resume flag and silently end the
+    // meeting.
+    try {
+      await chrome.runtime.sendMessage({ type: 'SWITCH_PENDING', resume: wasRunning });
+    } catch (e) { /* the panel will fall back to the autosave */ }
+
+    // Release the capture: the tab can only be captured once, so the panel
     // cannot arm until this window lets go.
     if (transcriber?.running) {
       await transcriber.stop({ flushMs: 400 });
@@ -889,7 +906,7 @@ async function backToSidebar(pendingOpen) {
     const snapshot = transcriber ? transcriber.store.serialize() : null;
     await teardown();
 
-    // Hand the transcript over before the panel reads it.
+    // Hand the transcript over. The panel is waiting on exactly this.
     await chrome.runtime.sendMessage({
       type: 'BACK_TO_PANEL',
       snapshot,
@@ -1754,17 +1771,21 @@ async function previewModelState() {
   // recording: the panel fell through to the autosave, which carries text but no
   // resume flag, so the meeting quietly ended.
   //
-  // The panel waits briefly, but only when a pop-out window is still on record —
-  // that is the signal it was opened BY the switch, whose snapshot is written
-  // just after sidePanel.open() fires. An ordinary panel open has no window and
-  // must not stall.
+  // When a switch is genuinely in flight the window says so BEFORE its teardown,
+  // so the wait tracks the actual hand-off rather than a guess at how long a
+  // recognizer takes to flush. A fixed timer was the second version of this bug:
+  // fast enough in a warm test, too short for a real meeting.
   let handoffWait = 0;
   if (!IS_WINDOW) {
     try {
-      const open = await chrome.runtime.sendMessage({ type: 'GET_POPOUT_WINDOW' });
-      if (open?.ok && open.windowId !== undefined) handoffWait = 2500;
+      const pending = await chrome.runtime.sendMessage({ type: 'GET_SWITCH_PENDING' });
+      if (pending?.ok && pending.pending) handoffWait = SWITCH_HANDOFF_WAIT_MS;
     } catch (e) { /* no worker answer: do not wait */ }
   }
+  // Say so while waiting: this is the one path where the panel can sit for a
+  // couple of seconds before showing anything, and an empty panel reads as a
+  // lost meeting.
+  if (handoffWait) setStatus('Bringing the transcript back…');
   let handoff = await claimHandoff({ waitMs: handoffWait });
 
   // A pop-out hand-off carries its own text; otherwise pick up whatever the last

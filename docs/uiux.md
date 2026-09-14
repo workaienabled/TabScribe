@@ -269,9 +269,14 @@ protect. `start({allowMic: true})` covers exactly that case.
 Two ordering problems fell out of the fix, both caused by the gesture rule:
 
 - `sidePanel.open()` must fire inside the click, so the panel document can load
-  **before** `backToSidebar()` has written the snapshot. `claimHandoff()` now
-  polls briefly, and only when a pop-out window is still on record — an ordinary
-  panel open must not stall.
+  **before** `backToSidebar()` has written the snapshot. The panel therefore has
+  to wait — and *how* it waits was the third version of this bug. A fixed 2500ms
+  timer passed the suite (warm model, short clip, sub-second teardown) and failed
+  in real use, where the recognizer's final flush takes longer: the wait expired,
+  the panel fell through to the autosave, and the meeting ended. The window now
+  **announces** the switch before tearing down, so the panel waits on the actual
+  hand-off instead of a guess. The remaining 20s figure is only a ceiling on a
+  wait that normally ends the moment the snapshot lands.
 - For the same reason the panel can reach `armCapture()` while the window still
   holds the tab, which fails with *"Cannot capture a tab with an active stream"*.
   The release is already in flight, so that specific error retries instead of
@@ -281,6 +286,11 @@ Two ordering problems fell out of the fix, both caused by the gesture rule:
 real audio with a real microphone grant**, because both defects are about a live
 session surviving a document swap. A stubbed transcriber would have passed while
 the product failed — which is precisely what happened.
+
+It also runs the switch a second time with the hand-off message **deliberately
+delayed**, because the first version of this suite only ever exercised a fast
+teardown and therefore could not see the timer bug. A timing fix whose test
+cannot fail when the timing is wrong is not a test of anything.
 
 ## Deliberate limits
 
