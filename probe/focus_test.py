@@ -69,7 +69,10 @@ def focus(ui):
     # The toggle silences the toast, which fires on every selection while reading.
     # It must not silence an action the user explicitly pressed: with no toast and
     # no status, Copy looked broken. Auto-copy stays quiet (asserted in prefs_test).
-    ui.check('manual copy respects the toast toggle but still acknowledges itself', ui.js("!document.getElementById('toast').classList.contains('show') && /copied/i.test(document.getElementById('status').textContent) && document.getElementById('copyBtn').getAttribute('aria-label') === 'Copy selected passage'"))
+    # The acknowledgement is the control itself plus a live-region announcement.
+    # It must NOT be the status line, which belongs to recognition: writing there
+    # erased "Listening" and cleared recognition errors (action_feedback_test.py).
+    ui.check('manual copy respects the toast toggle but still acknowledges itself', ui.js("(() => { const log=document.getElementById('actionLog'); return !document.getElementById('toast').classList.contains('show') && !!log && /copied/i.test(log.textContent) && document.getElementById('copyBtn').classList.contains('did') && document.getElementById('copyBtn').getAttribute('aria-label') === 'Copy selected passage'; })()"))
     whole = ui.js('fixtureStore.toText()')
     with tempfile.TemporaryDirectory(prefix='tabscribe-download-test-') as directory:
         for timestamps in [False, True]:

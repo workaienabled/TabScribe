@@ -53,6 +53,7 @@ const el = {
   fontSize: document.getElementById('fontSizeSel'),
   prefsPanel: document.getElementById('prefsPanel'),
   toast: document.getElementById('toast'),
+  actionLog: document.getElementById('actionLog'),
   transcript: document.getElementById('transcript'),
   jumpLatest: document.getElementById('jumpLatestBtn'),
   empty: document.getElementById('emptyHint'),
@@ -418,7 +419,8 @@ function clearScreen() {
     if (screenHidden.has(key)) { entry.row.remove(); nodes.delete(key); }
   }
   render(lastStore);
-  confirmAction('Screen cleared', 'Screen cleared. The text is still in the download.');
+  confirmAction('Screen cleared', 'Screen cleared. The text is still in the download.',
+                el.clearScreen);
 }
 
 function showHidden() {
@@ -632,11 +634,25 @@ function showToast(message = 'Copied') {
  * toast is off — it fires on every selection, and narrating it is the noise the
  * toggle exists to remove.
  *
- * The toast keeps its short fixed wording; the longer sentence is only for the
- * status line, which has room for it.
+ * The fallback is NOT the status line. That line belongs to recognition, and
+ * writing "Copied" into it replaced "Listening" — worse, setStatus also clears
+ * the error state, so copying a passage could erase a recognition failure and
+ * leave the panel looking healthy while capture was dead. The acknowledgement
+ * now goes to a live region for assistive technology and a brief mark on the
+ * control that was pressed, neither of which can overwrite capture's story.
  */
-function confirmAction(toastText, statusText) {
-  if (!showToast(toastText)) setStatus(statusText);
+let didMarkTimer = null;
+
+function confirmAction(toastText, statusText, control = null) {
+  // Announced either way: the toast is decorative and `aria-live` on a element
+  // that only sometimes appears is not a dependable announcement.
+  if (el.actionLog) el.actionLog.textContent = statusText;
+  if (showToast(toastText)) return;
+  if (!control) return;
+  if (didMarkTimer) clearTimeout(didMarkTimer);
+  for (const b of document.querySelectorAll('button.did')) b.classList.remove('did');
+  control.classList.add('did');
+  didMarkTimer = setTimeout(() => control.classList.remove('did'), 1200);
 }
 
 async function autoCopySelection() {
@@ -930,17 +946,28 @@ function setRecording(on) {
  * They diverged after a hand-off once: the button read "Focus window" while
  * screen readers still announced "Open in window".
  */
-function setPopoutLabel(text) {
+
+/**
+ * The visible word for each destination. It stays ONE short word: this control
+ * sits in the tightest row in the product, and the longer phrases this used to
+ * set ("Focus window", "Open in window") pushed Delete — and at times the gear —
+ * off the right edge at 280px. The explanation lives in the tooltip, which has
+ * room for it.
+ */
+const POPOUT_LABELS = {
+  window: {text: 'Window', title: 'Move TabScribe into its own window'},
+  focus: {text: 'Window', title: 'Bring the TabScribe window to the front'},
+  sidebar: {text: 'Sidebar', title: 'Move TabScribe back into the browser sidebar'},
+};
+
+function setPopoutLabel(which) {
+  const {text, title} = POPOUT_LABELS[which] || POPOUT_LABELS.window;
   const label = el.popout.querySelector('.popout-label');
   if (label) label.textContent = text;
-  el.popout.setAttribute('aria-label', text);
-  if (text === 'Focus window') {
-    el.popout.title = 'Bring the TabScribe window to the front';
-  } else if (text === 'Sidebar') {
-    el.popout.title = 'Move TabScribe back into the browser sidebar';
-  } else {
-    el.popout.title = 'Move TabScribe into its own window';
-  }
+  // The accessible name carries the fuller phrasing: a screen reader has no
+  // width limit, and "Window" alone does not say what pressing it will do.
+  el.popout.setAttribute('aria-label', title);
+  el.popout.title = title;
 }
 
 /**
@@ -1153,7 +1180,7 @@ async function popOut() {
     el.record.disabled = true;
     setRecording(false);
     el.popout.disabled = false;
-    setPopoutLabel('Focus window');
+    setPopoutLabel('focus');
   } catch (e) {
     handedOff = false;
     setStatus(String(e && e.message ? e.message : e), true);
@@ -1397,7 +1424,7 @@ async function reclaimAfterSwitch({ viaFocus = false } = {}) {
     handedOff = false; // this document owns the tab again
     el.record.disabled = false;
     el.popout.disabled = false;
-    setPopoutLabel('Open in window');
+    setPopoutLabel('window');
 
     if (handoff.resume) {
       await start({ allowMic: true });
@@ -1631,22 +1658,37 @@ async function writeClipboard(text) {
     // The Clipboard API refuses to write from an unfocused document; fall back to
     // a scratch textarea, which does not disturb the transcript selection because
     // the previous selection is restored afterwards.
+    //
+    // Selecting the scratch element also moves KEYBOARD FOCUS. Restoring the
+    // ranges brought the highlight back but left focus on the body, so the
+    // reader's next Tab started from the top of the panel. Focus is restored
+    // alongside the selection, and in a `finally` so a throwing execCommand
+    // cannot stand the user in a stripped state or leak the scratch node.
     const sel = window.getSelection();
     const saved = [];
     for (let i = 0; i < sel.rangeCount; i += 1) saved.push(sel.getRangeAt(i).cloneRange());
+    const previouslyFocused = document.activeElement;
 
     const ta = document.createElement('textarea');
     ta.value = text;
     ta.style.position = 'fixed';
     ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand('copy');
-    ta.remove();
-
-    sel.removeAllRanges();
-    for (const range of saved) sel.addRange(range);
-    return ok;
+    try {
+      document.body.appendChild(ta);
+      ta.select();
+      return document.execCommand('copy');
+    } catch (e2) {
+      return false;
+    } finally {
+      ta.remove();
+      sel.removeAllRanges();
+      for (const range of saved) sel.addRange(range);
+      // preventScroll: returning focus must not also move the reader's view.
+      if (previouslyFocused && previouslyFocused.isConnected
+          && typeof previouslyFocused.focus === 'function') {
+        previouslyFocused.focus({ preventScroll: true });
+      }
+    }
   }
 }
 
@@ -1669,7 +1711,7 @@ async function copy() {
   const words = text.split(/\s+/).filter(Boolean).length;
   confirmAction('Copied', selected
     ? `Copied the selected passage (${words} words).`
-    : `Copied the whole transcript (${words} words).`);
+    : `Copied the whole transcript (${words} words).`, el.copy);
 }
 
 
@@ -1718,7 +1760,7 @@ function download() {
   const withMic = el.includeMic.checked && mic?.hasText();
   confirmAction('Downloaded', withMic
     ? `Downloaded ${name}, including your microphone.`
-    : `Downloaded ${name}`);
+    : `Downloaded ${name}`, el.download);
   return true;
 }
 
@@ -1994,7 +2036,10 @@ async function init() {
   // below would run against defaults rather than the user's chosen values.
   applyPrefs(await prefs.load());
   // The view-switch control names the view it goes TO, not the one it is in.
-  if (IS_WINDOW) setPopoutLabel('Sidebar');
+  // Both states route through the same mapping: setting only the window case
+  // here left a fresh panel on the HTML's hardcoded name while a reclaimed one
+  // used the mapping's, so identical views announced differently.
+  setPopoutLabel(IS_WINDOW ? 'sidebar' : 'window');
   // Read the real grant state before anything reports on the microphone. This
   // never prompts; it only decides whether Start may open the microphone and
   // whether the "Allow microphone…" button is offered.

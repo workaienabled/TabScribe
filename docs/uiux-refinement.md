@@ -70,6 +70,56 @@ and persistent failures remain fatal. Three fault-injection unit tests failed
 before the change and pass after it; three real microphone-suite reruns also
 completed with zero exits. This is test teardown only, not an extension change.
 
+## Follow-up pass: three audit findings
+
+A read-only audit raised three defects that the first pass did not cover. Each
+was reproduced against the shipped code before being changed.
+
+- **Acknowledgement no longer overwrites recognition status.** With the Copy
+  toast off, Copy and Download wrote their confirmation into the status line —
+  the line that reports capture. `setStatus` also clears the error state, so
+  copying a passage erased a recognition failure and left the panel looking
+  healthy while capture was dead. Confirmations now go to an `sr-only`
+  `aria-live` region plus a brief mark on the control that was pressed. The
+  status line is recognition's alone. Genuine failures still report there.
+- **The clipboard fallback restores keyboard focus.** Selecting the scratch
+  textarea moves focus; only the selection was being restored, so after a
+  fallback copy the highlight returned but the next Tab started from the top of
+  the panel. Focus is now saved and restored with the selection, in a `finally`
+  block — which also fixed a leak the new test caught: a throwing `execCommand`
+  left the scratch element in the DOM and reported nothing.
+- **The view-switch control keeps one short word.** Coming back from the pop-out
+  relabelled it "Open in window", and handing off set "Focus window". Besides
+  contradicting the requested short label, the longer phrases pushed Delete —
+  and in one state the gear as well — off the right edge at 280px. The visible
+  label is now always one word; the fuller phrasing lives in the tooltip and the
+  accessible name, which have no width limit.
+
+New suites: `probe/action_feedback_test.py` (RED 7/17, GREEN 18/18) and
+`probe/switch_label_test.py` (RED 10/14, GREEN 15/15). `focus_test.py` and
+`robustness_test.py` asserted the old status-line contract and were updated to
+the new one rather than worked around.
+
+Independent review then caught two defects the first round of tests missed, each
+reproduced before being fixed:
+
+- **One announcement per action.** The toast and the new log both carried
+  `role="status" aria-live="polite"`, so with the toast at its default ON every
+  Copy and Download was read out twice. The toast is now `aria-hidden`: it is
+  the sighted channel, and the log is the announced one.
+- **One accessible name per state.** `setPopoutLabel` ran at startup only in the
+  window view, so a fresh panel kept the HTML's hardcoded name while a reclaimed
+  panel used the mapping's — the same divergence the function exists to prevent.
+  Both states now route through the mapping, and the markup's fallback matches
+  it. The suite asserts the exact name, since substring matching could not see
+  the difference.
+
+One deliberate consequence: auto-copy is now silent to assistive technology. It
+previously announced through the toast's own live region, which fired on every
+selection change while reading. That is the noise the toast toggle exists to
+remove, and the code already treated auto-copy as the quiet path when the toggle
+was off. Explicit Copy, Download, and Clear screen still announce.
+
 ## Deliberately unchanged
 
 Capture ownership, recognition, view handoff, autosave, microphone isolation,

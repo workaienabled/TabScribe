@@ -43,17 +43,30 @@ def robustness(ui):
     time.sleep(.4)
     state = ui.js("({status: document.getElementById('status').textContent, clip: null})")
     copied = ui.js("navigator.clipboard.readText()")
-    ui.check('manual Copy confirms in the status line when the toast is off',
-             bool(state['status'].strip()) and 'copied' in state['status'].lower(), state)
+    # The acknowledgement deliberately does NOT go to the status line: that line
+    # belongs to recognition, and a copy used to erase "Listening" and any
+    # recognition error with it. See action_feedback_test.py.
+    ack = ui.js("""({
+      announced: (document.getElementById('actionLog') || {}).textContent || '',
+      done: document.getElementById('copyBtn').classList.contains('did'),
+      status: document.getElementById('status').textContent,
+    })""")
+    ui.check('manual Copy acknowledges itself without touching the status line',
+             'copied' in ack['announced'].lower() and ack['done']
+             and 'copied' not in ack['status'].lower(), ack)
     ui.check('manual Copy with the toast off still copies the transcript',
              copied.startswith('Segment 1.'), copied[:40])
 
     ui.js("document.getElementById('status').textContent = ''")
     click(ui, 'downloadBtn')
     time.sleep(.6)
-    downloaded = ui.js("document.getElementById('status').textContent")
+    downloaded = ui.js("""({
+      announced: (document.getElementById('actionLog') || {}).textContent || '',
+      done: document.getElementById('downloadBtn').classList.contains('did'),
+    })""")
     ui.check('Download confirms that a file was written',
-             bool(downloaded.strip()) and 'download' in downloaded.lower(), downloaded)
+             'download' in downloaded['announced'].lower() and downloaded['done'],
+             downloaded)
 
     # --- a failed download must not be silent --------------------------------
     ui.js("""(() => {
@@ -119,7 +132,7 @@ def robustness(ui):
     ui.check('a second pop-out click does not report a capture error',
              not again['isError'] and 'active stream' not in again['status'].lower(), again)
     ui.check('a second pop-out click leaves the hand-off state intact',
-             again['startDisabled'] and again['label'] == 'Focus window'
+             again['startDisabled'] and 'front' in (again['label'] or '').lower()
              and not again['popoutDisabled'], again)
 
 

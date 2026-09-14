@@ -218,6 +218,14 @@ select { min-height: 28px; padding: 4px 6px; border: 1px solid var(--border); bo
    control the user would actually press. */
 button#downloadBtn.unsaved { color: var(--accent); border-color: var(--accent); }
 .link-btn { padding: 1px 6px; border: 0; background: transparent; color: var(--accent); font-size: 11px; }
+/* Announced, never drawn. Not `display: none`, which would remove it from the
+   accessibility tree and silence the announcement entirely. */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+/* The quiet acknowledgement: when the toast is off, the control the user just
+   pressed confirms itself rather than overwriting the recognition status. */
+button.did { color: var(--ok); border-color: var(--ok); }
+button#downloadBtn.did.unsaved { color: var(--ok); border-color: var(--ok); }
 .jump-latest { flex: none; align-self: flex-end; margin: 0 12px 4px; padding: 2px 8px; min-height: 0; border: 0; background: transparent; color: var(--accent); font-size: 11px; }
 .toast { position: absolute; z-index: 8; left: 50%; bottom: 48px; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 4px 12px; border-radius: 12px; background: var(--fg); color: var(--bg); font-size: 11.5px; pointer-events: none; opacity: 0; transition: opacity .12s ease-out; }
 .toast.show { opacity: .92; }

@@ -65,7 +65,10 @@
 
     <!-- Icon AND text: this is the one control worth naming in place, because
          moving to a window is a decision rather than a frequent action. -->
-    <button id="popoutBtn" class="popout" aria-label="Open in window" title="Move TabScribe into its own window">
+    <!-- The name and tooltip are set from POPOUT_LABELS on load; these are the
+         pre-script fallback, and must match the 'window' entry so the panel
+         cannot report one name fresh and another after a round trip. -->
+    <button id="popoutBtn" class="popout" aria-label="Move TabScribe into its own window" title="Move TabScribe into its own window">
       <span class="popout-icon" aria-hidden="true">⧉</span>
       <span class="popout-label">Window</span>
     </button>
@@ -170,8 +173,18 @@
   </main>
 
   <button id="jumpLatestBtn" class="jump-latest" hidden>↓ Back to live</button>
+  <!--
+    Copy and Download acknowledge themselves here, never in the status line.
+    The status line belongs to recognition: writing "Copied" into it replaced
+    "Listening", and cleared a recognition error, so an explicit copy could hide
+    the fact that capture had stopped. Screen-reader users get this region; the
+    sighted confirmation is the toast, or a brief mark on the control itself.
+  -->
+  <div id="actionLog" class="sr-only" role="status" aria-live="polite"></div>
   <div class="feedback-stack">
-  <div id="toast" class="toast" role="status" aria-live="polite" hidden>Copied</div>
+  <!-- Purely visual. #actionLog is the announcement channel: leaving aria-live
+       here too made every Copy and Download read out twice. -->
+  <div id="toast" class="toast" aria-hidden="true" hidden>Copied</div>
   <!--
     Delete asks first when the transcript is not on disk. Undo backs a delete,
     but Undo lives in this document's memory and dies with it, so an

@@ -19,6 +19,8 @@ CASES += [
     ('ux-preferences-refinement', ['preferences_refinement_test.py'], {}),
     ('ux-feedback-refinement', ['feedback_refinement_test.py'], {}),
     ('ux-restore-order', ['restore_order_test.py'], {}),
+    ('ux-action-feedback', ['action_feedback_test.py'], {}),
+    ('ux-switch-label', ['switch_label_test.py'], {}),
     ('ux-focus', ['focus_test.py'], {}),
     ('ux-robustness', ['robustness_test.py'], {}),
     ('ux-review', ['robustness_test.py', 'review'], {}),
