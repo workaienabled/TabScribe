@@ -62,7 +62,11 @@ button.popout { display: inline-flex; align-items: center; justify-content: cent
 .popout-label { line-height: 1; }
 .popout-icon { font-size: 13px; line-height: 1; }
 button.prefs-toggle[aria-expanded="true"] { color: var(--fg); border-color: var(--muted); }
-body.view-window #popoutBtn { display: none; }
+/* The control is a two-way switch, so it stays visible in BOTH views: in the
+   panel it reads "Window", in the window it reads "Sidebar". It used to be
+   hidden here, which left the pop-out with no way back — and no close handler
+   can supply one, because chrome.sidePanel.open() needs a user gesture and a
+   window closing is not one. */
 
 /* One toggle, two states. The square inside the circle is the stop affordance;
    aria-pressed carries the state for anyone not looking at it. */

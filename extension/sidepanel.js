@@ -832,17 +832,98 @@ function setRecording(on) {
 }
 
 /**
- * Keep the pop-out control's visible label and accessible name in agreement.
- * They diverged after a hand-off: the button read "Focus window" while screen
- * readers still announced "Open in window".
+ * Keep the view-switch control's visible label and accessible name in agreement.
+ * They diverged after a hand-off once: the button read "Focus window" while
+ * screen readers still announced "Open in window".
  */
 function setPopoutLabel(text) {
   const label = el.popout.querySelector('.popout-label');
   if (label) label.textContent = text;
   el.popout.setAttribute('aria-label', text);
-  el.popout.title = text === 'Focus window'
-    ? 'Bring the TabScribe window to the front'
-    : 'Move TabScribe into its own window';
+  if (text === 'Focus window') {
+    el.popout.title = 'Bring the TabScribe window to the front';
+  } else if (text === 'Sidebar') {
+    el.popout.title = 'Move TabScribe back into the browser sidebar';
+  } else {
+    el.popout.title = 'Move TabScribe into its own window';
+  }
+}
+
+/**
+ * Go back to the side panel, and close this window.
+ *
+ * The counterpart of popOut(), and the reason the control stays visible in the
+ * window: closing the window cannot bring the sidebar back on its own.
+ * chrome.sidePanel.open() requires a user gesture, and a window being closed is
+ * not one — so no windows.onRemoved handler can ever reopen it. A click can.
+ *
+ * Measured in probe/spike_back_to_panel.py on Chrome 151: sidePanel.open({tabId})
+ * called from a click handler in this window resolves, and the panel appears on
+ * the tab being transcribed.
+ *
+ * The transcript rides across in the same hand-off snapshot pop-out uses, so the
+ * switch is not a reset in either direction.
+ */
+async function backToSidebar(pendingOpen) {
+  el.popout.disabled = true;
+  const wasRunning = !!transcriber?.running;
+  try {
+    setStatus('Returning to the sidebar…');
+
+    // Release the capture first: the tab can only be captured once, so the panel
+    // cannot arm until this window lets go.
+    if (transcriber?.running) {
+      await transcriber.stop({ flushMs: 400 });
+    }
+    const snapshot = transcriber ? transcriber.store.serialize() : null;
+    await teardown();
+
+    // Hand the transcript over before the panel reads it.
+    await chrome.runtime.sendMessage({
+      type: 'BACK_TO_PANEL',
+      snapshot,
+      resume: wasRunning,
+    });
+
+    // The open was started synchronously in the click handler, above any await,
+    // because the gesture cannot survive this function's awaits.
+    const opened = await pendingOpen;
+    if (!opened?.ok) {
+      // A failed switch must not leave the user with a dead window.
+      await armCapture();
+      setStatus(opened?.error
+        ? `Could not reopen the sidebar: ${opened.error}`
+        : 'Could not reopen the sidebar.', true);
+      el.popout.disabled = false;
+      return;
+    }
+    // The panel is open and owns the transcript now; this window's job is done.
+    window.close();
+  } catch (e) {
+    await armCapture();
+    setStatus(`Could not reopen the sidebar: ${e && e.message ? e.message : e}`, true);
+    el.popout.disabled = false;
+  }
+}
+
+/**
+ * Ask Chrome to open the side panel, synchronously, inside the click.
+ *
+ * Separate from backToSidebar() precisely because it must run before anything is
+ * awaited: sidePanel.open() needs a live user activation, and every await in the
+ * handler spends it. The promise is passed along and settled later.
+ */
+function requestSidebarOpen() {
+  try {
+    if (targetTabId === undefined || targetTabId === null) {
+      return Promise.resolve({ ok: false, error: 'no tab to attach to' });
+    }
+    return chrome.sidePanel.open({ tabId: targetTabId })
+      .then(() => ({ ok: true }))
+      .catch((e) => ({ ok: false, error: String(e && e.message ? e.message : e) }));
+  } catch (e) {
+    return Promise.resolve({ ok: false, error: String(e && e.message ? e.message : e) });
+  }
 }
 
 async function popOut() {
@@ -1502,7 +1583,15 @@ el.undoDismiss.addEventListener('click', () => {
   el.undoBar.hidden = true;
   el.transcript.focus({preventScroll: true});
 });
-el.popout.addEventListener('click', popOut);
+// One control, two directions. In the panel it pops out; in the window it goes
+// back. The sidebar request is issued FIRST and synchronously, because
+// sidePanel.open() needs the click's user activation and backToSidebar() awaits
+// several things before it would otherwise get there.
+el.popout.addEventListener('click', () => {
+  if (!IS_WINDOW) return popOut();
+  const pendingOpen = requestSidebarOpen();
+  return backToSidebar(pendingOpen);
+});
 el.useCloud.addEventListener('click', useCloudInstead);
 el.retryModel.addEventListener('click', retryModel);
 el.prefsBtn.addEventListener('click', () => {
@@ -1622,6 +1711,8 @@ async function previewModelState() {
   // makes the UI visibly flip, and worse, the model check and capture arming
   // below would run against defaults rather than the user's chosen values.
   applyPrefs(await prefs.load());
+  // The view-switch control names the view it goes TO, not the one it is in.
+  if (IS_WINDOW) setPopoutLabel('Sidebar');
   // Read the real grant state before anything reports on the microphone. This
   // never prompts; it only decides whether Start may open the microphone and
   // whether the "Allow microphone…" button is offered.

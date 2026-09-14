@@ -284,10 +284,19 @@ def main():
         checks.add("opens as a popup window (not a tab)",
                    wintype.get("type") == "popup", json.dumps(wintype))
 
-        checks.add("pop-out button hidden inside the window",
-                   chrome.evaluate(win_sid,
-                                   "getComputedStyle(document.getElementById('popoutBtn')).display === 'none'",
-                                   await_promise=False))
+        # NOT hidden any more: it is the way back. Hiding it left the window with
+        # no route to the sidebar, and no close handler can supply one —
+        # sidePanel.open() needs a user gesture that a window close does not give.
+        switch = chrome.evaluate(win_sid, """(() => {
+          const b = document.getElementById('popoutBtn');
+          const label = b.querySelector('.popout-label');
+          return {shown: getComputedStyle(b).display !== 'none',
+                  text: label ? label.textContent.trim() : '',
+                  name: b.getAttribute('aria-label') || ''};
+        })()""", await_promise=False)
+        checks.add("the window offers a way back to the sidebar",
+                   switch.get("shown") and switch.get("text", "").lower() == "sidebar",
+                   json.dumps(switch))
 
         # The side panel must close itself, leaving only the window. Verified that
         # chrome.sidePanel.close({windowId}) is the working shape on Chrome 151

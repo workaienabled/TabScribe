@@ -59,11 +59,14 @@ accessible name; none carries its meaning in colour alone.
   the pop-out window, or closing the browser does not lose the meeting. It is
   kept in browser session storage, not written to disk, and is discarded when
   Chrome fully exits, so **download before you quit Chrome**.
-- **Moving between the window and the side panel is a round trip.** Press
-  **Window** to pop out; close that window and open TabScribe again and the panel
-  picks up the same transcript. There is no close prompt in either direction —
-  nothing is lost, so nothing needs confirming. The Download control is
-  highlighted whenever there is something not yet saved.
+- **One control switches between the two views.** In the sidebar it reads
+  **Window** and pops out; in the window it reads **Sidebar** and moves back,
+  closing the window as it goes. The transcript comes with it either way.
+  Closing the pop-out with the window's own close button does *not* reopen the
+  sidebar — Chrome only allows that from a click — so use **Sidebar** to switch
+  back, or the toolbar icon to reopen the panel. There is no close prompt in
+  either direction: nothing is lost, so nothing needs confirming. The Download
+  control is highlighted whenever there is something not yet saved.
 - **Include my microphone in the saved file** (on by default): also transcribes
   your own speech and merges it into the **downloaded file only**. It is never
   shown in the live transcript and never copied by Copy. See below.

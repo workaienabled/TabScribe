@@ -181,23 +181,47 @@ harness artifact: it is reachable by anyone who presses Record twice quickly.
 The control is now disabled for the duration of the teardown, and
 `delete_control_test.py` asserts it without needing audio.
 
-## Window and panel are a round trip
+## Window and panel: one control, two directions
 
-The pop-out used to be one-way: a tab can only be captured once, so handing off
-to the window left the panel unable to take it back. With the transcript
-persistent, the return leg is mostly free — both views are the same document with
-a different view flag, and both write the same autosave, so reopening the panel
-already picked the text up.
+The pop-out used to be one-way. The previous commit claimed to have closed that,
+and it had not: it made a *new* panel document restore the transcript, which is a
+different thing from closing the window bringing the sidebar back. A user found
+the gap in the first minute of testing.
 
-What was missing was the capture claim. `chrome.windows.onRemoved` now releases
-it and re-enables the panel for the tab the window was transcribing, so the
-toolbar icon works again instead of doing nothing.
+The reason no close handler can fix it: **`chrome.sidePanel.open()` requires a
+user gesture, and a window being closed is not one.** Anything attempted from
+`windows.onRemoved` fails with *"`sidePanel.open()` may only be called in
+response to a user gesture"*. That is not a bug to work around; it is the API's
+contract.
 
-One real bug surfaced while testing this. On the failure path where the tab
-cannot be captured, `init()` returned early with *"Click the TabScribe toolbar
-icon…"* and never mentioned that a transcript had just been restored — so
-reopening the panel on the wrong tab read as "your text is gone". The restore
-notice now leads that message.
+So the switch is a button, which is a gesture. One control, named for where it
+goes:
+
+| view | label | action |
+|---|---|---|
+| side panel | **Window** | hand off, open the pop-out, close the panel |
+| pop-out window | **Sidebar** | hand off, open the panel, close the window |
+
+Measured first in `probe/spike_back_to_panel.py` on Chrome 151:
+`sidePanel.open({tabId})` called synchronously inside a click handler **in the
+pop-out window** resolves, and the panel appears on the tab being transcribed.
+
+The gesture is spent by the first `await`, so the open is issued in the click
+handler *before* anything else happens, and the resulting promise is handed to
+`backToSidebar()` to settle after the teardown:
+
+```js
+el.popout.addEventListener('click', () => {
+  if (!IS_WINDOW) return popOut();
+  const pendingOpen = requestSidebarOpen();   // synchronous, gesture alive
+  return backToSidebar(pendingOpen);          // awaits teardown, then the open
+});
+```
+
+Both directions carry the transcript in the same hand-off snapshot, so switching
+views is never a reset. `windows.onRemoved` still releases the capture claim and
+re-enables the panel for the tab, so closing the window the ordinary way leaves
+the toolbar icon working — it just cannot reopen the panel for you.
 
 ### The close prompt is gone
 
@@ -210,12 +234,19 @@ The quiet signal stays: the Download control is highlighted while there is
 something not yet saved. That is the part worth keeping — it answers "have I
 saved this?" without interrupting anything.
 
-### The Window label is permanent
+### The switch control's label is permanent
 
-It is the only text in the control row, and the round trip is the thing users
-need to find, so it survives every width down to 280px. Fitting it back in cost
-horizontal padding on the icon buttons and, below 320px, the ⧉ glyph — never a
-touch target. All eight controls stay 28×28 on one row at 280px.
+It is the only text in the control row, and moving between views is the thing
+users need to find, so it survives every width down to 280px. Fitting it back in
+cost horizontal padding on the icon buttons and, below 320px, the ⧉ glyph — never
+a touch target. All eight controls stay 28×28 on one row at 280px.
+
+### A real bug found alongside it
+
+On the path where the tab cannot be captured, `init()` returned early with
+*"Click the TabScribe toolbar icon…"* and never mentioned that a transcript had
+just been restored — so reopening the panel on the wrong tab read as "your text
+is gone". The restore notice now leads that message.
 
 ## Deliberate limits
 

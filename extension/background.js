@@ -258,6 +258,39 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // Going the other way: the window hands the transcript back and the side panel
+  // picks it up. The panel itself is opened by the WINDOW, synchronously inside
+  // the click — sidePanel.open() needs a user gesture, and routing the call
+  // through here would spend it on the message round trip.
+  if (msg?.type === 'BACK_TO_PANEL') {
+    (async () => {
+      try {
+        if (msg.snapshot) {
+          await chrome.storage.session.set({
+            [HANDOFF_KEY]: { snapshot: msg.snapshot, resume: !!msg.resume },
+          });
+        }
+        // Re-enable the panel for the tab, in case the pop-out disabled it.
+        const stored = await chrome.storage.session.get(TARGET_KEY);
+        const tabId = stored[TARGET_KEY];
+        if (tabId !== undefined) {
+          try {
+            await chrome.sidePanel.setOptions({
+              tabId,
+              path: 'sidepanel.html',
+              enabled: true,
+            });
+          } catch (e) { /* the tab may be gone; the panel will say so */ }
+        }
+        await chrome.storage.session.remove(WINDOW_KEY);
+        sendResponse({ ok: true, tabId });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
+      }
+    })();
+    return true;
+  }
+
   // The window claims the handoff snapshot exactly once, so a later reload of the
   // window does not resurrect a stale transcript.
   if (msg?.type === 'CLAIM_HANDOFF') {
@@ -284,17 +317,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // Forget the pop-out window once it is gone, so the next pop-out opens a new one
 // instead of trying to focus a window that no longer exists.
 //
-// This is also what makes the round trip work. The window and the side panel are
-// the same document with a different view flag, and both write the same autosave,
-// so reopening the panel picks the transcript up. What the panel cannot do by
-// itself is re-capture a tab the closed window still holds a claim on — so the
-// claim is released here, at the moment the window goes away.
+// This deliberately does NOT reopen the side panel. chrome.sidePanel.open()
+// requires a user gesture and a window closing is not one, so any attempt here
+// fails with "`sidePanel.open()` may only be called in response to a user
+// gesture". Returning to the sidebar is the Sidebar button's job, in the window,
+// where a real click supplies the gesture. The panel is re-enabled for the tab
+// so the toolbar icon works again either way.
 chrome.windows.onRemoved.addListener(async (windowId) => {
   const stored = await chrome.storage.session.get(WINDOW_KEY);
   if (stored[WINDOW_KEY] === windowId) {
     await chrome.storage.session.remove(WINDOW_KEY);
-    // Re-enable the panel for the tab it was transcribing, so the toolbar icon
-    // opens it again rather than doing nothing.
     const target = await chrome.storage.session.get(TARGET_KEY);
     const tabId = target[TARGET_KEY];
     if (tabId !== undefined) {

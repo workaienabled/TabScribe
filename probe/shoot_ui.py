@@ -44,6 +44,16 @@ try:
     ui.shot('focused-cleared-screen')
     ui.js("document.getElementById('showHiddenBtn').click()")
     time.sleep(.15)
+    # The window view, where the same control reads "Sidebar" — the way back.
+    ui.js("document.body.classList.add('view-window'); "
+          "document.querySelector('.popout-label').textContent='Sidebar'")
+    ui.size(460, 780)
+    time.sleep(.2)
+    ui.shot('focused-window-mode')
+    ui.js("document.body.classList.remove('view-window'); "
+          "document.querySelector('.popout-label').textContent='Window'")
+    ui.size(420, 820)
+    time.sleep(.15)
     # The page that actually asks for the microphone, in a tab. Shot from a
     # throwaway target so the panel session below is untouched.
     panel_tid, panel_sid = ui.tid, ui.sid

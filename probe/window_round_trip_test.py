@@ -98,8 +98,11 @@ def window_to_panel_round_trip(ui):
       };
     })()""")
     ui.check('the window view holds the transcript', before['segs'] == 5, before)
-    ui.check('and the window view hides its own pop-out control',
-             before['isWindow'] is True and before['popoutShown'] is False, before)
+    # The control is NOT hidden here any more: it is the way back. Hiding it was
+    # the defect the user hit — closing the window cannot reopen the sidebar,
+    # because sidePanel.open() needs a gesture a window close does not supply.
+    ui.check('the window view still offers the switch control',
+             before['isWindow'] is True and before['popoutShown'] is True, before)
 
     # Give the autosave its coalescing window, then destroy this document the way
     # closing the window does.

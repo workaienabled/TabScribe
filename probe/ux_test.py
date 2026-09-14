@@ -66,8 +66,20 @@ class UI:
             # window itself rather than about panel layout.
             self.size(460, 780)
             return
-        # Exercise side-panel layout with the same real restored transcript.
-        self.js("document.body.classList.remove('view-window')")
+        # Panel mode has to be a REAL panel document, not a window one with the
+        # class stripped: IS_WINDOW is read from the URL, and it now decides what
+        # the view-switch control does, not merely how the page is styled.
+        #
+        # A panel document restores from the autosave, not the hand-off snapshot
+        # (only a window claims that), so stage the autosave instead.
+        autosave = dict(snapshot=dict(epoch=0, segments=segments), savedText='')
+        self.js(f"chrome.storage.session.set({{liveTranscript: {json.dumps(autosave)}}})")
+        old = self.tid
+        self.tid, self.sid = self.chrome.new_tab(f'chrome-extension://{self.ext_id}/sidepanel.html')
+        self.chrome.wait_for_js(self.sid, "!!document.getElementById('recordBtn')", timeout=25)
+        self.chrome.send('Target.closeTarget', targetId=old)
+        self.chrome.wait_for_js(
+            self.sid, f"document.querySelectorAll('.seg').length === {count}", timeout=25)
         self.size(360)
 
     def arm_capture(self):
