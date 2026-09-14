@@ -49,12 +49,26 @@ serially because they share port 8899. Do not use the person's signed-in browser
 ```sh
 DISPLAY=:193 /usr/bin/python3 probe/run_regressions.py
 node --test probe/recovery.test.mjs probe/mic-merge.test.mjs
+/usr/bin/python3 probe/mic_cleanup_test.py
 DISPLAY=:194 /usr/bin/python3 probe/shoot_ui.py
 ```
 
 The serial runner includes `ui_refinement_test.py`, `preferences_refinement_test.py`,
 `feedback_refinement_test.py`, and `restore_order_test.py`. Results and screenshots
 are local under `artifacts/uiux/`; the full runner writes `regression-results.json`.
+
+## Test teardown
+
+The first full run had zero failed behavioral assertions, but the microphone
+suite exited nonzero after its 12/12 result: a late Chrome profile write raced
+`TemporaryDirectory` cleanup (`ENOTEMPTY`). It is preserved locally in
+`artifacts/uiux-first-run/`, not counted as a successful full run.
+
+The microphone harness now kills Chrome, then retries deletion of its owned
+session directory only for `ENOTEMPTY`, at most 20 attempts. Permission errors
+and persistent failures remain fatal. Three fault-injection unit tests failed
+before the change and pass after it; three real microphone-suite reruns also
+completed with zero exits. This is test teardown only, not an extension change.
 
 ## Deliberately unchanged
 

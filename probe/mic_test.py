@@ -2,7 +2,7 @@
 
 Proves the three things the feature was asked for, against real artifacts:
 
-  * off by default, and with it off the saved file is unchanged;
+  * on by default, but with nothing heard the saved file is unchanged;
   * microphone speech NEVER appears in the live transcript;
   * microphone speech DOES appear in the file written by Download.
 
@@ -10,7 +10,9 @@ Plus the non-negotiable: a microphone failure must not disturb the meeting
 transcript. Chrome's fake device supplies the audio, so no real microphone is
 opened. Transcript text is an explicit UI fixture, not speech-accuracy evidence.
 """
+import errno
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -62,6 +64,17 @@ class MicUI:
 
     def finish(self):
         self.chrome.kill()
+        # Chrome subprocesses can finish profile writes after the browser exits.
+        # Retry only that transient race, only inside this test's owned directory.
+        # Persistent or unrelated I/O failures must still fail the suite.
+        for attempt in range(20):
+            try:
+                shutil.rmtree(self.temp)
+                break
+            except OSError as error:
+                if error.errno != errno.ENOTEMPTY or attempt == 19:
+                    raise
+                time.sleep(.1)
         (OUT / 'ux-mic.json').write_text(json.dumps(self.checks, indent=2))
         passed = sum(c['ok'] for c in self.checks)
         print(f'RESULT: {passed}/{len(self.checks)} checks passed', flush=True)
