@@ -6,10 +6,33 @@ inconsistency and a 280px fit risk.
 
 Drives the real hand-off code paths rather than setting labels by hand.
 """
+import re
 import sys
 import time
 
-from ux_test import UI
+from ux_test import ROOT, UI
+
+
+def static_fallback_matches(ui):
+    """The markup's pre-script name must equal the mapping's.
+
+    The panel briefly shows the HTML's attributes before the module runs. When
+    those disagreed with POPOUT_LABELS, a fresh panel and a reclaimed one gave
+    the same view two different accessible names. Comparing the source files
+    catches a mapping edit that leaves the fallback behind — a browser check
+    cannot, because by the time it looks, init() has already overwritten it.
+    """
+    html = (ROOT / 'extension/sidepanel.html').read_text()
+    js = (ROOT / 'extension/sidepanel.js').read_text()
+    button = re.search(r'<button id="popoutBtn".*?>', html, re.S)
+    markup = re.search(r'aria-label="([^"]*)"', button.group(0) if button else '')
+    mapping = re.search(r"window:\s*\{text:\s*'([^']*)',\s*title:\s*'([^']*)'\}", js)
+    found = {'markup_name': markup.group(1) if markup else None,
+             'mapping_title': mapping.group(2) if mapping else None,
+             'mapping_text': mapping.group(1) if mapping else None}
+    ui.check('the markup fallback name matches the mapping it will be replaced by',
+             bool(markup) and bool(mapping)
+             and found['markup_name'] == found['mapping_title'], found)
 
 
 def measure(ui):
@@ -43,6 +66,7 @@ def fits(ui, where):
 def switch_label(ui):
     ui.size(420, 720)
     ui.fixture(3)
+    static_fallback_matches(ui)
 
     start = measure(ui)
     ui.check('the side panel offers the window in one word',

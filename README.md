@@ -41,7 +41,7 @@ accessible name; none carries its meaning in colour alone.
 - **Microphone status:** whether your own voice is being saved — off, ready,
   recording, blocked, or not yet permitted. In that last state it is a button, and
   pressing it opens the page that can ask for permission.
-- **Open in window:** moves the transcript into a pop-out and closes the sidebar.
+- **Window:** moves the transcript into a pop-out and closes the sidebar.
   If recognition was running, it resumes there. Window size is remembered.
 - **Gear:** opens compact preferences in place. Escape or the gear dismisses them.
   All the controls stay on one row down to 280px.
