@@ -122,6 +122,41 @@ let armed = false;
 // "Stopped." and re-enable controls this document no longer owns.
 let handedOff = false;
 
+/**
+ * The message protocol this document was built against. Must match the
+ * worker's PROTOCOL_VERSION in background.js; bump both together.
+ *
+ * Chrome can keep an old service worker alive across an unpacked reload, so a
+ * panel from the new files may be talking to a worker from the old ones. That
+ * worker answers the messages it knows and returns undefined for the rest, and
+ * nothing errors: the failure shows up later, somewhere else, looking like a
+ * different bug. A stale worker stopped a live meeting mid-switch this way,
+ * through four fixes to the switch itself. So the mismatch is detected once,
+ * at startup, and said out loud.
+ */
+const PROTOCOL_VERSION = 3;
+window.PROTOCOL_VERSION = PROTOCOL_VERSION;
+let workerStale = false;
+
+/** True when a reply came from a worker that predates this document. */
+function replyIsStale(reply) {
+  return reply === undefined
+    || (reply && typeof reply === 'object' && reply.workerVersion !== PROTOCOL_VERSION);
+}
+
+const STALE_WORKER_MESSAGE =
+  'TabScribe was updated but Chrome is still running the old version. '
+  + 'Reload the extension at chrome://extensions, or restart Chrome.';
+
+function noteStaleWorker(where, reply) {
+  workerStale = true;
+  switchLog('STALE WORKER detected', {
+    at: where,
+    expected: PROTOCOL_VERSION,
+    got: reply && typeof reply === 'object' ? (reply.workerVersion ?? 'unversioned') : String(reply),
+  });
+}
+
 // How long the side panel will wait for a hand-off the window has ANNOUNCED.
 // This is a ceiling on a wait that normally ends the moment the snapshot lands,
 // not a guess at how long a teardown takes — it only has to outlast the slowest
@@ -935,10 +970,28 @@ async function backToSidebar(pendingOpen) {
     // long the recognizer's final flush takes. Waiting on a fixed timer instead
     // is what let a slow teardown drop the resume flag and silently end the
     // meeting.
+    //
+    // It is also the gate. An old worker still running from before a reload
+    // does not know this message and returns undefined; a versioned worker
+    // answers with its version. Finding that out HERE, while the meeting is
+    // still recording, is the difference between a warning and a lost meeting.
+    let announced;
     try {
-      await chrome.runtime.sendMessage({ type: 'SWITCH_PENDING', resume: wasRunning });
-      switchLog('announced SWITCH_PENDING');
-    } catch (e) { switchLog('SWITCH_PENDING failed', String(e)); }
+      announced = await chrome.runtime.sendMessage({ type: 'SWITCH_PENDING', resume: wasRunning });
+    } catch (e) {
+      announced = undefined;
+      switchLog('SWITCH_PENDING threw', String(e && e.message ? e.message : e));
+    }
+    if (replyIsStale(announced)) {
+      noteStaleWorker('SWITCH_PENDING', announced);
+      // Nothing has been torn down. Let the panel that just opened know it has
+      // nothing to wait for, and keep this window exactly as it was.
+      pendingOpen.catch(() => {});
+      setStatus(STALE_WORKER_MESSAGE, true);
+      el.popout.disabled = false;
+      return;
+    }
+    switchLog('announced SWITCH_PENDING');
 
     // Release the capture: the tab can only be captured once, so the panel
     // cannot arm until this window lets go.
@@ -959,18 +1012,31 @@ async function backToSidebar(pendingOpen) {
       snapshot,
       resume: wasRunning,
     });
-    await switchLog('BACK_TO_PANEL sent', {ok: !!handed?.ok});
+    await switchLog('BACK_TO_PANEL sent', {ok: !!handed?.ok, error: handed?.error ?? null,
+                                           reply: handed === undefined ? 'undefined' : 'object'});
 
     // The open was started synchronously in the click handler, above any await,
     // because the gesture cannot survive this function's awaits.
     const opened = await pendingOpen;
     switchLog('sidePanel.open result', opened);
-    if (!opened?.ok) {
-      // A failed switch must not leave the user with a dead window.
+
+    // Close this window ONLY when the hand-off actually happened: the panel is
+    // open AND the worker confirmed it stored the snapshot. Closing on the open
+    // alone was how a failed hand-off took a live meeting with it — the panel
+    // came up with nothing to claim, and the window that still had the
+    // transcript was already gone.
+    if (!handed?.ok || !opened?.ok) {
       await armCapture();
-      setStatus(opened?.error
-        ? `Could not reopen the sidebar: ${opened.error}`
-        : 'Could not reopen the sidebar.', true);
+      if (wasRunning) {
+        // The meeting was live; it is the thing worth restoring first.
+        try { await start({ allowMic: true }); } catch (e) { /* status says why */ }
+      }
+      const why = !handed?.ok
+        ? (replyIsStale(handed) ? STALE_WORKER_MESSAGE
+           : `Could not hand the transcript to the sidebar: ${handed?.error || 'no reply'}`)
+        : `Could not reopen the sidebar: ${opened?.error || 'unknown error'}`;
+      if (!handed?.ok && replyIsStale(handed)) noteStaleWorker('BACK_TO_PANEL', handed);
+      setStatus(why, true);
       el.popout.disabled = false;
       return;
     }
@@ -1858,7 +1924,7 @@ async function previewModelState() {
 //
 // In window mode the transcript handed over by the side panel is restored first, so
 // the text is on screen even if arming turns out to be slow.
-(async () => {
+async function init() {
   // Preferences first, before anything reads a control. Applying them later
   // makes the UI visibly flip, and worse, the model check and capture arming
   // below would run against defaults rather than the user's chosen values.
@@ -1869,6 +1935,16 @@ async function previewModelState() {
   // never prompts; it only decides whether Start may open the microphone and
   // whether the "Allow microphone…" button is offered.
   await refreshMicPermission();
+
+  // Is the worker the same build as this document? One round trip, on a
+  // message every worker has always answered, so an old worker replies too —
+  // just without a version. Checked before anything that depends on the newer
+  // messages, so a mismatch is reported here rather than surfacing later as a
+  // hand-off that silently fails.
+  try {
+    const hello = await chrome.runtime.sendMessage({ type: 'GET_TARGET' });
+    if (replyIsStale(hello)) noteStaleWorker('startup', hello);
+  } catch (e) { /* the worker may be waking; the switch path re-checks */ }
 
   // Either view may be handed a transcript. The window receives one when the
   // user pops out; the side panel receives one when they press Sidebar to come
@@ -1953,4 +2029,12 @@ async function previewModelState() {
 
   // Surface the one-time download requirement up front rather than at Start.
   previewModelState();
-})();
+}
+
+// init() returns early on several paths, so the one thing that must be said
+// regardless of how it ended is said here, after it: a worker from an older
+// build than this document. Every later feature quietly misbehaves against
+// one, and the user cannot tell that from any other bug.
+init().finally(() => {
+  if (workerStale) setStatus(STALE_WORKER_MESSAGE, true);
+});

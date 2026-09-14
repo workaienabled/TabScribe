@@ -19,6 +19,12 @@ or through Chrome's generic side-panel menu does not grant audio capture access.
 After changing the source, reload the extension at `chrome://extensions` and
 reopen its panel. Save any transcript before reloading.
 
+Chrome can keep the **old background worker running** after a reload, so the
+panel from the new files ends up talking to a worker from the old ones. TabScribe
+detects that and says *"TabScribe was updated but Chrome is still running the
+old version"* in the status line. If you see it, reload once more at
+`chrome://extensions`, or restart Chrome.
+
 ## Reading and controls
 
 Everything lives in one row of icon controls. Each has a tooltip and an
@@ -62,7 +68,9 @@ accessible name; none carries its meaning in colour alone.
 - **One control switches between the two views.** In the sidebar it reads
   **Window** and pops out; in the window it reads **Sidebar** and moves back,
   closing the window as it goes. Recording, the microphone, and the transcript
-  all continue across the switch — it is a move, not a restart.
+  all continue across the switch — it is a move, not a restart. If the switch
+  cannot complete, the window stays put with the meeting still recording and
+  says why, rather than closing on a hand-off that did not happen.
   Closing the pop-out with the window's own close button does *not* reopen the
   sidebar — Chrome only allows that from a click — so use **Sidebar** to switch
   back, or the toolbar icon to reopen the panel. There is no close prompt in

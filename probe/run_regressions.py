@@ -37,6 +37,7 @@ CASES += [
     # Owns port 8899 like the e2e cases, so it must stay in this serial list.
     ('live-switch', ['live_switch_test.py'], {}),
     ('switch-survivor', ['switch_survivor_test.py'], {}),
+    ('stale-worker', ['stale_worker_test.py'], {}),
     ('selection', ['selection_test.py'], {}),
     ('clear', ['clear_test.py'], {}),
     ('model-notice', ['model_notice_test.py'], {}),

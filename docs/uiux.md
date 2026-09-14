@@ -316,6 +316,48 @@ claims it, re-arms, resumes. The worker broadcasts `SWITCHED_BACK` the moment it
 stores the snapshot, so the survivor acts without depending on focus. Verified
 load-bearing: with the broadcast removed, the survivor stays at `stopped`.
 
+### The fifth cause, found in the user's own Chrome
+
+The switch log the user pasted ended at `BACK_TO_PANEL sent {"ok":false}` — a
+boolean with no reason, because that is all the log line recorded. Attached to
+the real browser over CDP, the reason was visible in one probe: every original
+message (`GET_TARGET`, `GET_HOST_WINDOW`, `CLAIM_HANDOFF`) answered, and every
+message added in the last three commits returned `undefined`. The files on disk
+were current. **The service worker in memory was not** — Chrome had kept the
+old one running across the unpacked reload.
+
+Nothing errored. The old worker simply fell through to `return false` for the
+messages it did not know, the window read that as a failed hand-off, and —
+this is the part that cost the meeting — **closed itself anyway**, because the
+close was gated on the panel opening, not on the hand-off succeeding. The panel
+came up with nothing to claim; the window that still held the transcript was
+gone.
+
+Four fixes to the hand-off logic could not touch this. The logic was fine. The
+process running it was three commits behind.
+
+Three things changed:
+
+- **Every worker reply carries `workerVersion`**, and the panel checks it on
+  the first message at startup. A mismatch is reported in the status line and
+  the switch log as *"TabScribe was updated but Chrome is still running the old
+  version"* — the one message that would have ended this in a minute.
+- **The switch is gated on the announcement.** `SWITCH_PENDING` is sent before
+  anything is torn down; an unversioned or missing reply stops the switch there,
+  with the meeting untouched.
+- **The window closes only when the hand-off actually succeeded** — worker
+  confirmed *and* panel open. On any failure it re-arms, resumes if it was
+  recording, and says why.
+
+`probe/stale_worker_test.py` simulates the stale worker from the window's side
+(known messages answered, new ones `undefined`, no version) and was red at 4/10:
+the window closed itself on a hand-off that never happened, exactly as reported.
+
+The wider lesson is in `docs/` and the skill: **the switch log recorded a
+boolean where it needed a reason.** `{"ok":false}` told us something failed;
+`{"ok":false, "reply":"undefined"}` would have named the stale worker on the
+spot.
+
 ### The switch log
 
 Four attempts, each fixing a cause the harness could reproduce and missing the

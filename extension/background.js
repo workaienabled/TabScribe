@@ -25,6 +25,13 @@ const TARGET_KEY = 'targetTabId';
 const WINDOW_KEY = 'popoutWindowId';
 const HANDOFF_KEY = 'handoffSnapshot';
 const MIC_PAGE_SHOWN_KEY = 'micPageShown';
+// Bump whenever a message type is added or its reply shape changes. Chrome can
+// keep an old service worker running across an unpacked reload, so a panel
+// document from the new files may be talking to a worker from the old ones.
+// The panel compares this against its own copy and says so, rather than
+// letting the mismatch surface later as an unrelated failure — which is how a
+// stale worker once stopped a meeting mid-switch with no error anywhere.
+const PROTOCOL_VERSION = 3;
 // Set by the window the moment it starts switching back, cleared when the panel
 // claims the snapshot. The TTL only guards against a switch that died halfway:
 // it must comfortably exceed a slow recognizer flush, or it reintroduces the
@@ -112,7 +119,13 @@ chrome.action.onClicked.addListener((tab) => {
     .catch(() => {});
 });
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, respond) => {
+  // Every reply is stamped with the protocol version this worker was built
+  // with. Object replies only; the handlers below never send anything else.
+  const sendResponse = (reply) => respond(
+    reply && typeof reply === 'object' ? { ...reply, workerVersion: PROTOCOL_VERSION } : reply
+  );
+
   if (msg?.type === 'GET_STREAM_ID') {
     (async () => {
       try {
