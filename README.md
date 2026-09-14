@@ -61,7 +61,8 @@ accessible name; none carries its meaning in colour alone.
   Chrome fully exits, so **download before you quit Chrome**.
 - **One control switches between the two views.** In the sidebar it reads
   **Window** and pops out; in the window it reads **Sidebar** and moves back,
-  closing the window as it goes. The transcript comes with it either way.
+  closing the window as it goes. Recording, the microphone, and the transcript
+  all continue across the switch — it is a move, not a restart.
   Closing the pop-out with the window's own close button does *not* reopen the
   sidebar — Chrome only allows that from a click — so use **Sidebar** to switch
   back, or the toolbar icon to reopen the panel. There is no close prompt in

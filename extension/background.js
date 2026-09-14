@@ -282,8 +282,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             });
           } catch (e) { /* the tab may be gone; the panel will say so */ }
         }
-        await chrome.storage.session.remove(WINDOW_KEY);
+        // WINDOW_KEY is deliberately NOT removed here. The panel reads it on
+        // load to decide whether to wait for this snapshot; clearing it first
+        // would make the panel skip the wait and miss the hand-off. The window
+        // closing right after clears it via windows.onRemoved.
         sendResponse({ ok: true, tabId });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
+      }
+    })();
+    return true;
+  }
+
+  // Is a pop-out window currently on record? The side panel asks on load: a
+  // window still registered means this panel was very likely opened by the
+  // Sidebar switch, whose snapshot lands moments later.
+  if (msg?.type === 'GET_POPOUT_WINDOW') {
+    (async () => {
+      try {
+        const stored = await chrome.storage.session.get(WINDOW_KEY);
+        sendResponse({ ok: true, windowId: stored[WINDOW_KEY] });
       } catch (e) {
         sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
       }

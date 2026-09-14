@@ -248,6 +248,40 @@ On the path where the tab cannot be captured, `init()` returned early with
 just been restored — so reopening the panel on the wrong tab read as "your text
 is gone". The restore notice now leads that message.
 
+### Two bugs the switch shipped with
+
+Both reported from real use, both in the resume path, and neither caught by the
+suite that introduced the switch — it tested a *stopped* session moving between
+views, so nothing about a live one was ever exercised.
+
+**Recording stopped going window → sidebar.** `claimHandoff()` ran only when
+`IS_WINDOW`. The window claimed its snapshot on pop-out; the panel never claimed
+the one the Sidebar button wrote, fell through to the autosave — which carries
+text but no resume flag — and the meeting quietly ended. Both views claim now.
+
+**The microphone went green → grey on every switch.** `start()` refused to open
+the microphone without a live gesture, which is correct for an automatic resume:
+a gesture-less `getUserMedia` is auto-denied and would report a refusal the user
+never saw. But that reasoning does not hold once the grant is *stored* — with a
+grant in hand the call cannot prompt, so there is nothing for a gesture to
+protect. `start({allowMic: true})` covers exactly that case.
+
+Two ordering problems fell out of the fix, both caused by the gesture rule:
+
+- `sidePanel.open()` must fire inside the click, so the panel document can load
+  **before** `backToSidebar()` has written the snapshot. `claimHandoff()` now
+  polls briefly, and only when a pop-out window is still on record — an ordinary
+  panel open must not stall.
+- For the same reason the panel can reach `armCapture()` while the window still
+  holds the tab, which fails with *"Cannot capture a tab with an active stream"*.
+  The release is already in flight, so that specific error retries instead of
+  being reported as a failure that fixes itself.
+
+`probe/live_switch_test.py` asserts all of it against a **real recognizer over
+real audio with a real microphone grant**, because both defects are about a live
+session surviving a document swap. A stubbed transcriber would have passed while
+the product failed — which is precisely what happened.
+
 ## Deliberate limits
 
 No Find, transcript library, built-in AI, recording upload, automatic cloud

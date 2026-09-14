@@ -122,7 +122,7 @@ let armed = false;
 // "Stopped." and re-enable controls this document no longer owns.
 let handedOff = false;
 
-async function armCapture() {
+async function armCapture({ retries = 0 } = {}) {
   if (armed) return { ok: true };
   try {
     const res = await chrome.runtime.sendMessage({ type: 'GET_STREAM_ID', tabId: targetTabId });
@@ -159,7 +159,18 @@ async function armCapture() {
     armed = true;
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: String(e && e.message ? e.message : e) };
+    const message = String(e && e.message ? e.message : e);
+    // "Cannot capture a tab with an active stream" means another TabScribe
+    // document still holds this tab. That happens on the way back from the
+    // pop-out window: sidePanel.open() must fire inside the click to keep the
+    // user's gesture, so the panel can load before the window has finished
+    // letting go. The release is already in flight, so wait briefly and retry
+    // rather than reporting a failure that fixes itself.
+    if (retries > 0 && /active stream/i.test(message)) {
+      await new Promise((r) => setTimeout(r, 400));
+      return armCapture({ retries: retries - 1 });
+    }
+    return { ok: false, error: message };
   }
 }
 
@@ -1013,17 +1024,30 @@ async function popOut() {
   }
 }
 
-/** In window mode, adopt the transcript the side panel handed over. */
-async function claimHandoff() {
-  try {
-    const res = await chrome.runtime.sendMessage({ type: 'CLAIM_HANDOFF' });
-    if (res?.ok && res.snapshot) {
-      ensureTranscriber().store.restore(res.snapshot);
-      render(transcriber.store);
-      return { received: true, resume: !!res.resume };
-    }
-  } catch (e) { /* no handoff waiting */ }
-  return { received: false, resume: false };
+/**
+ * Adopt the transcript the other view handed over.
+ *
+ * Both directions use this. Popping out writes the snapshot before the window is
+ * created, so the window finds it immediately. Coming back cannot: the panel is
+ * opened by sidePanel.open() inside the click, to keep the user's gesture, so
+ * this document can load BEFORE backToSidebar() has written the snapshot. Hence
+ * the short poll — without it the panel claims nothing, falls through to the
+ * autosave, and the meeting stops.
+ */
+async function claimHandoff({ waitMs = 0 } = {}) {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try {
+      const res = await chrome.runtime.sendMessage({ type: 'CLAIM_HANDOFF' });
+      if (res?.ok && res.snapshot) {
+        ensureTranscriber().store.restore(res.snapshot);
+        render(transcriber.store);
+        return { received: true, resume: !!res.resume };
+      }
+    } catch (e) { /* no handoff waiting */ }
+    if (Date.now() >= deadline) return { received: false, resume: false };
+    await new Promise((r) => setTimeout(r, 120));
+  }
 }
 
 async function refreshTarget() {
@@ -1044,7 +1068,7 @@ async function refreshTarget() {
  * microphone request without a gesture is auto-denied with no prompt shown, and
  * reporting that as a refusal is the bug this whole path exists to avoid.
  */
-async function start({ gesture = false } = {}) {
+async function start({ gesture = false, allowMic = false } = {}) {
   el.record.disabled = true;
   // FIRST, synchronously: the user's click is a live gesture right now, and
   // everything below this line awaits, which would destroy it.
@@ -1054,9 +1078,15 @@ async function start({ gesture = false } = {}) {
   // "Permission dismissed" and the panel would report a refusal the user was
   // never asked for. So it only opens the microphone once the grant already
   // exists; obtaining it is mic-permission.html's job, in a tab.
+  //
+  // `allowMic` covers the view switch, which has no live gesture — the document
+  // is new — but does have a stored grant. With a grant in hand getUserMedia
+  // cannot prompt, so there is nothing a gesture would protect, and requiring
+  // one silently dropped the microphone every time the user moved between the
+  // sidebar and the window.
   // `armed` keeps the microphone from ever queueing ahead of tab capture.
-  const pendingMic = (gesture && armed && micGranted && !micBlocked)
-    ? requestMicStream() : null;
+  const mayOpenMic = (gesture || allowMic) && armed && micGranted && !micBlocked;
+  const pendingMic = mayOpenMic ? requestMicStream() : null;
   setState('starting');
   setStatus('Preparing…');
   // The toggle reads as recording from the moment the user presses it, and stays
@@ -1718,10 +1748,24 @@ async function previewModelState() {
   // whether the "Allow microphone…" button is offered.
   await refreshMicPermission();
 
-  let handoff = { received: false, resume: false };
-  if (IS_WINDOW) {
-    handoff = await claimHandoff();
+  // Either view may be handed a transcript. The window receives one when the
+  // user pops out; the side panel receives one when they press Sidebar to come
+  // back. Claiming it in only one direction is what made the switch back stop
+  // recording: the panel fell through to the autosave, which carries text but no
+  // resume flag, so the meeting quietly ended.
+  //
+  // The panel waits briefly, but only when a pop-out window is still on record —
+  // that is the signal it was opened BY the switch, whose snapshot is written
+  // just after sidePanel.open() fires. An ordinary panel open has no window and
+  // must not stall.
+  let handoffWait = 0;
+  if (!IS_WINDOW) {
+    try {
+      const open = await chrome.runtime.sendMessage({ type: 'GET_POPOUT_WINDOW' });
+      if (open?.ok && open.windowId !== undefined) handoffWait = 2500;
+    } catch (e) { /* no worker answer: do not wait */ }
   }
+  let handoff = await claimHandoff({ waitMs: handoffWait });
 
   // A pop-out hand-off carries its own text; otherwise pick up whatever the last
   // panel document left behind. Closing the side panel destroys it without any
@@ -1732,7 +1776,10 @@ async function previewModelState() {
   }
 
   await refreshTarget();
-  const cap = await armCapture();
+  // Retry here specifically: when this document was opened by the view switch,
+  // the other view may still be releasing the tab. Every other caller wants the
+  // immediate answer.
+  const cap = await armCapture({ retries: handoff.received ? 6 : 0 });
 
   if (!cap.ok) {
     // A restored transcript is still here even when this tab cannot be captured
@@ -1750,15 +1797,16 @@ async function previewModelState() {
   }
 
   if (handoff.resume) {
-    // The side panel was transcribing when the user popped out; pick up where it
-    // left off rather than making them press Start again.
+    // The other view was transcribing when the user switched; pick up where it
+    // left off rather than making them press Record again.
     //
-    // No gesture here, so the microphone is not opened on this path even when
-    // granted; the meeting transcript is what must resume. The user's next Start
-    // in this window picks the microphone up.
-    await start();
+    // allowMic: there is no live gesture here — this document was just created —
+    // but the microphone grant is stored, so getUserMedia cannot prompt and the
+    // gesture would protect nothing. Without this the microphone was dropped on
+    // every switch, and the indicator went green to grey with no explanation.
+    await start({ allowMic: true });
     if (el.includeMic.checked && micGranted && !mic?.running) {
-      setMicHint('Press Stop and Start in this window to include your microphone.', false);
+      setMicHint('The microphone did not reopen. Press Record twice to retry it.', false);
     }
     return;
   }
@@ -1768,7 +1816,9 @@ async function previewModelState() {
     return;
   }
   setStatus(handoff.received
-    ? 'Moved to this window. Press Record to continue transcribing.'
+    ? (IS_WINDOW
+        ? 'Moved to this window. Press Record to continue transcribing.'
+        : 'Back in the sidebar. Press Record to continue transcribing.')
     : 'Ready. Press Record to transcribe this tab.');
 
   // Surface the one-time download requirement up front rather than at Start.
