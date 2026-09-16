@@ -400,6 +400,46 @@ chrome.storage.session.get('switchLog')
 
 from the panel's devtools console.
 
+## A fatal error must survive the stop that follows it
+
+Reported from a real Chrome 150: the panel "wrote Stopped right after start".
+The version was a red herring — on-device speech has shipped since Chrome 139 —
+and the actual defect was an ordering contract inside the extension.
+
+`SpeechRecognition` fires `onerror` and then `onend` microseconds later. The
+panel's `onerror` set a useful message; its `onend` handler then overwrote it
+with a bare `"Stopped."` before anyone could read it. Every distinct failure
+arrived as the same blank word: no language pack installed, microphone blocked,
+recognition service refusing — indistinguishable.
+
+The reason now travels **with** the stop. `onStatus('stopped', {fatal, error})`
+carries the code, and the panel translates it into something actionable rather
+than echoing Chrome's vocabulary at the user:
+
+> The on-device en-US model is not installed in this Chrome. Press Record again
+> to download it, or uncheck "On-device only" to use the cloud service.
+
+`probe/fatal-status.test.mjs` drives the real `Transcriber` with a fake
+recognizer and asserts the callback sequence — error first, stop second, reason
+preserved — plus the two cases that must *not* look like failures: a deliberate
+Stop, and an audio track that simply ended.
+
+## The declared Chrome floor is checked, not guessed
+
+`minimum_chrome_version` was `"150"`, a number nobody had verified. It was wrong
+in the direction that hurts: it refuses installation on browsers that run the
+extension perfectly well, and it invites exactly the misdiagnosis above — when
+something breaks on 150, a floor of 150 makes the version look guilty.
+
+The real floor is **139**, set by on-device `SpeechRecognition.available()`.
+`chrome.sidePanel.close()` needs 141, but it is called inside a `try`/`catch`
+with a working fallback (the survivor path), so it does not raise the floor.
+
+`probe/min-chrome-version.test.mjs` pins this against the source: it fails if the
+manifest is below what an API requires, *and* if it is above what anything
+actually needs. Optional APIs must be proven guarded. Verified in both
+directions by setting the manifest to 120 and 150 and watching it fail.
+
 ## Deliberate limits
 
 No Find, transcript library, built-in AI, recording upload, automatic cloud

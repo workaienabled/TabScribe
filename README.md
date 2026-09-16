@@ -151,6 +151,31 @@ happens automatically. The extension UI has no remote fonts, analytics, or scrip
 Transcripts are kept in memory; pop-out handoff temporarily uses session storage.
 Use Download before closing the view. Preferences persist; transcript history does not.
 
+## Chrome version
+
+**Chrome 139 or newer.** That floor is set by on-device speech recognition
+(`SpeechRecognition.available()` / `processLocally`), which is what TabScribe
+transcribes with. `probe/min-chrome-version.test.mjs` checks the manifest against
+the APIs actually used, in both directions — it fails if the floor is too low to
+run, and equally if it is higher than necessary and locks out browsers that work.
+
+On **Chrome 139–140** the pop-out window works, but the side panel does not close
+itself when you pop out: `chrome.sidePanel.close()` arrived in 141. The panel is
+left behind, and pressing **Sidebar** in the window returns to it correctly.
+Everything else is unaffected.
+
+### "Stopped" right after pressing Record
+
+Almost always the on-device language model is not installed yet — Chrome reports
+that as `language-not-supported`, and TabScribe now says so explicitly and offers
+the fix (press Record again to download it, or uncheck **On-device only**).
+Earlier builds printed a bare "Stopped." for every fatal error, which made a
+missing model look identical to a blocked microphone.
+
+If the status line instead says TabScribe was updated but Chrome is running the
+old version, reload the extension at `chrome://extensions` — Chrome sometimes
+keeps the previous background worker alive across a reload.
+
 ## Development and verification
 
 `main` preserves the pre-redesign source; `uiux` is the focused compact UI.
@@ -160,8 +185,14 @@ fleet. Fleet tooling is documented separately in [`deploy/README.md`](deploy/REA
 Run Chrome tests only on a private virtual display and isolated test profiles:
 
 ```bash
-node --test probe/recovery.test.mjs
 DISPLAY=:191 python3 probe/run_regressions.py
+```
+
+The runner starts with the Node unit tests (no display needed), then the browser
+suites. To run just the unit tests:
+
+```bash
+cd probe && node --test *.test.mjs
 ```
 
 Start your own Xvfb on that display first; the runner deliberately refuses common

@@ -904,16 +904,47 @@ prefs.onChange((diff) => {
 
 /* ------------------------------------------------------------------ pop-out */
 
+/**
+ * What a fatal recognition error actually means, in words that name the fix.
+ *
+ * The codes are not for the user: "language-not-supported" is what Chrome says
+ * when on-device recognition is on and the language pack is not installed —
+ * which is a thing they can fix, if anyone tells them.
+ */
+function fatalRecognitionMessage(code, lang) {
+  if (code === 'language-not-supported') {
+    return `The on-device ${lang || 'speech'} model is not installed in this Chrome. `
+      + 'Press Record again to download it, or uncheck "On-device only" to use '
+      + 'the cloud service.';
+  }
+  if (code === 'not-allowed' || code === 'service-not-allowed') {
+    return 'Chrome blocked speech recognition for this page. Check Chrome\'s site '
+      + 'and microphone settings, then press Record again.';
+  }
+  return `Recognition stopped: ${code}.`;
+}
+
 /** A Transcriber that holds text without a recognition session running. */
 function ensureTranscriber() {
   if (transcriber) return transcriber;
   transcriber = new Transcriber({
     onUpdate: render,
-    onStatus: (s) => {
+    onStatus: (s, detail = {}) => {
       setState(s === 'listening' ? 'listening' : s);
       if (s === 'listening') setStatus('Listening. Select any text to copy part of it.');
       else if (s === 'restarting') setStatus('Reconnecting recognizer…');
-      else if (s === 'stopped') setStatus('Stopped.');
+      else if (s === 'stopped') {
+        // A fatal stop keeps its reason. onerror fired microseconds ago and set
+        // a message; overwriting it with a bare "Stopped." is what made every
+        // distinct failure look identical — and left a real report of
+        // "it wrote Stopped right after start" with nothing to act on.
+        if (detail.fatal) {
+          setState('error');
+          setStatus(fatalRecognitionMessage(detail.error, el.lang.value), true);
+        } else {
+          setStatus('Stopped.');
+        }
+      }
     },
     onError: (code, message) => {
       setState('error');

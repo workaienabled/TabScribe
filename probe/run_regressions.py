@@ -50,10 +50,35 @@ CASES += [
     ('model-notice', ['model_notice_test.py'], {}),
 ]
 
+# Node unit tests. They were documented but never run by this runner, so a broken
+# contract between Transcriber and the panel could sit green for a whole session.
+# They are fast and need no display, so they run FIRST: a failure here explains a
+# browser failure that would otherwise take minutes to reproduce.
+UNIT_TESTS = [
+    'mic-merge.test.mjs',
+    'recovery.test.mjs',
+    'fatal-status.test.mjs',
+    'min-chrome-version.test.mjs',
+]
+
 if __name__ == '__main__':
     if not os.environ.get('DISPLAY') or os.environ['DISPLAY'] in (':0', ':1'):
         raise SystemExit('Use a dedicated virtual display for browser regression tests.')
     results = []
+
+    # Unit tests first: fast, display-free, and they explain browser failures.
+    print('START unit-tests', flush=True)
+    unit_start = time.monotonic()
+    unit_log = OUT / 'unit-tests.log'
+    with unit_log.open('w') as output:
+        proc = subprocess.run(['node', '--test', *UNIT_TESTS], cwd=ROOT / 'probe',
+                              stdout=output, stderr=subprocess.STDOUT, timeout=300)
+    unit_result = dict(name='unit-tests', exit_code=proc.returncode,
+                       seconds=round(time.monotonic() - unit_start, 1), log=str(unit_log))
+    results.append(unit_result)
+    (OUT / 'regression-results.json').write_text(json.dumps(results, indent=2))
+    print(f'END unit-tests: exit={proc.returncode}, {unit_result["seconds"]}s', flush=True)
+
     for name, args, extra in CASES:
         print(f'START {name}', flush=True)
         start = time.monotonic()
@@ -73,4 +98,6 @@ if __name__ == '__main__':
         if code == 124:
             break
     print(json.dumps(results, indent=2), flush=True)
-    sys.exit(0 if len(results)==len(CASES) and all(r['exit_code']==0 for r in results) else 1)
+    # +1 for the unit-test entry prepended above.
+    expected = len(CASES) + 1
+    sys.exit(0 if len(results) == expected and all(r['exit_code'] == 0 for r in results) else 1)

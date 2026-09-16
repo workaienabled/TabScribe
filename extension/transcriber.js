@@ -360,20 +360,29 @@ export class Transcriber {
     rec.onend = () => {
       if (this.stopping || !this.running) {
         this.running = false;
-        this.onStatus('stopped');
+        this.onStatus('stopped', { fatal: false, error: null });
         this.onUpdate(this.store);
         return;
       }
       // Fatal conditions must not be retried in a tight loop.
+      //
+      // The reason travels WITH the stop. onerror fires microseconds before
+      // this, so a host that only reads the status would overwrite its own
+      // error message with a bare "Stopped." — which is precisely what
+      // happened: a missing en-US language pack (processLocally with no pack
+      // installed fails as 'language-not-supported') reached the user as a
+      // blank word, indistinguishable from a blocked microphone or a refused
+      // service.
       if (this.lastError === 'not-allowed' || this.lastError === 'service-not-allowed' ||
           this.lastError === 'language-not-supported') {
         this.running = false;
-        this.onStatus('stopped');
+        this.onStatus('stopped', { fatal: true, error: this.lastError });
         return;
       }
       if (!this.track || this.track.readyState !== 'live') {
         this.running = false;
-        this.onStatus('stopped');
+        // Not a recognition failure: the tab simply stopped producing audio.
+        this.onStatus('stopped', { fatal: false, error: null, trackEnded: true });
         return;
       }
       this.restarts += 1;
