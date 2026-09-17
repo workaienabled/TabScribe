@@ -110,7 +110,7 @@
         </select>
       </div>
       <label class="check"><input type="checkbox" id="localOnly" checked aria-describedby="recognitionHint"> On-device only</label>
-      <p class="field-hint" id="recognitionHint">Language and on-device/cloud apply at the next Start.</p>
+      <p class="field-hint" id="recognitionHint">Language and on-device/cloud apply at the next recording.</p>
       <label class="check mic-check"><input type="checkbox" id="includeMic" checked aria-describedby="micHint"> Include my microphone in the saved file</label>
       <p class="field-hint" id="micHint">Your own speech is added to the downloaded transcript only — never shown live. Needs microphone permission.</p>
       <button id="micGrantBtn" class="mic-grant" hidden>Allow microphone…</button>
@@ -146,6 +146,8 @@
   </p>
 
   <div id="status" class="status" role="status" aria-live="polite" aria-atomic="true"></div>
+
+  <div id="issues" class="issues" role="alert" aria-atomic="true" hidden></div>
 
   <section id="modelPanel" class="model-panel" hidden aria-live="polite">
     <div class="model-head"><span class="model-icon" id="modelIcon" aria-hidden="true">↓</span><strong id="modelTitle">One-time model download</strong></div>
@@ -192,9 +194,9 @@
     usually "save it first", so the question offers that as an action.
   -->
   <div id="confirmBar" class="confirm-bar" role="alertdialog" aria-labelledby="confirmText" hidden>
-    <span id="confirmText">This transcript has not been downloaded. Delete it?</span>
+    <span id="confirmText">This transcript may not be saved. Delete it?</span>
     <span class="confirm-actions">
-      <button id="confirmSaveBtn" class="confirm-save">Download and delete</button>
+      <button id="confirmSaveBtn" class="confirm-save">Download first</button>
       <button id="confirmDeleteBtn" class="confirm-delete danger">Delete</button>
       <button id="confirmCancelBtn" class="confirm-cancel">Cancel</button>
     </span>

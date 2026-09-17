@@ -71,21 +71,37 @@ export const MIC_MESSAGES = {
         + 'address-bar camera icon, or in Settings → Privacy → Site settings → Microphone.',
   dismissed: 'The microphone request was dismissed, so your own speech is not being saved.',
   'no-device': 'No microphone was found, so only the meeting audio is being saved.',
-  'device-busy': 'The microphone is in use by another app, so only the meeting audio is being saved.',
+  'device-busy': 'The microphone is busy or unavailable, so only the meeting audio is being saved.',
   unsupported: 'This browser cannot transcribe the microphone.',
+  ended: 'The microphone disconnected or stopped. Your own speech is no longer being saved.',
+  'language-not-supported': 'Chrome cannot transcribe the microphone in the selected language and recognition mode.',
+  'service-not-allowed': 'Chrome blocked the microphone speech-recognition service.',
+  network: 'Microphone speech recognition stopped after repeated network errors.',
+  'audio-capture': 'Chrome could not capture microphone audio.',
+  'restart-failed': 'Microphone speech recognition could not restart.',
+  'start-timeout': 'Chrome did not start microphone speech recognition within 15 seconds.',
+  'restart-limit': 'Microphone speech recognition repeatedly ended without starting or hearing speech.',
+  'no-speech': 'Microphone speech recognition repeatedly ended without hearing speech.',
   failed: 'The microphone could not be started, so only the meeting audio is being saved.',
 };
 
 export class MicTranscriber {
-  constructor({ onStateChange = () => {} } = {}) {
+  constructor({ onStateChange = () => {}, onUpdate = () => {} } = {}) {
     this.store = new TranscriptStore();
     this.onStateChange = onStateChange;
+    this.onUpdate = onUpdate;
     this.stream = null;
     // A getUserMedia call that has not resolved yet. Tracked so that stopping
     // the microphone while a permission prompt is still open releases whatever
     // arrives afterwards, instead of leaving the recording indicator lit.
     this.pendingStream = null;
     this.discarded = false;
+    this.requestId = 0;
+    this.generation = 0;
+    this.failedRestarts = 0;
+    this.retryTimer = null;
+    this.startTimer = null;
+    this.sourceEnded = null;
     this.graph = null;
     this.recognition = null;
     this.running = false;
@@ -96,15 +112,15 @@ export class MicTranscriber {
   }
 
   /**
-   * Is a microphone usable at all? Never prompts and never throws; a browser
-   * without enumerateDevices, or one that reports nothing, simply answers false.
+   * Never prompts or throws. true/false means enumeration succeeded; null means
+   * it failed or is unavailable, not evidence that no microphone exists.
    */
   static async hasMicrophone() {
     try {
       const devices = await navigator.mediaDevices?.enumerateDevices?.();
-      return Array.isArray(devices) && devices.some((d) => d.kind === 'audioinput');
+      return Array.isArray(devices) ? devices.some((d) => d.kind === 'audioinput') : null;
     } catch (e) {
-      return false;
+      return null;
     }
   }
 
@@ -166,8 +182,11 @@ export class MicTranscriber {
    */
   open() {
     this.discarded = false;
+    const requestId = ++this.requestId;
+    stopStream(this.pendingStream);
+    this.pendingStream = null;
     return MicTranscriber.requestStream().then((res) => {
-      if (res.ok && this.discarded) {
+      if (requestId !== this.requestId || this.discarded) {
         stopStream(res.stream);
         return { ok: false, reason: 'cancelled', error: 'Cancelled before it started.' };
       }
@@ -195,10 +214,12 @@ export class MicTranscriber {
     // task, so it cannot guard against a second start() in the same tick. The
     // recognizer is assigned synchronously by _attach(), so test that instead —
     // otherwise two calls each build a graph and leak a live microphone.
-    if (this.running || this.recognition) {
-      stopStream(stream);
+    if (!this.stopping && (this.running || this.recognition || this.retryTimer)) {
+      if (stream !== this.stream) stopStream(stream);
       return { ok: true };
     }
+    this.generation += 1;
+    this.failedRestarts = 0;
     this.options = { lang, processLocally };
     this.lastError = null;
     this.stopping = false;
@@ -213,9 +234,18 @@ export class MicTranscriber {
       if (!stream || !stream.getAudioTracks().length) {
         throw new Error('The microphone produced no audio track.');
       }
+      if (!stream.getAudioTracks().some(track => track.readyState === 'live')) {
+        await this._terminal('ended');
+        return { ok: false, reason: 'ended', error: MIC_MESSAGES.ended };
+      }
 
       // monitor:false — recognition only. Playing the mic back would echo.
       this.graph = buildAudioGraph(this.stream, { monitor: false });
+      const generation = this.generation;
+      this.sourceEnded = () => {
+        if (this.generation === generation && !this.stopping) this._terminal('ended');
+      };
+      for (const track of stream.getAudioTracks()) track.addEventListener?.('ended', this.sourceEnded);
       // Share the meeting's clock origin. Without it a microphone attached late
       // (mid-session re-tick) times its first line from ITS start, which sorts
       // the user's turns to the top of the merged file instead of where they
@@ -231,6 +261,20 @@ export class MicTranscriber {
     }
   }
 
+  _updated() {
+    try { Promise.resolve(this.onUpdate(this.store)).catch(() => {}); } catch (e) { /* persistence observers are isolated */ }
+  }
+
+  _notify(state) {
+    try { Promise.resolve(this.onStateChange(state)).catch(() => {}); } catch (e) { /* an observer cannot break capture cleanup */ }
+  }
+
+  _terminal(code, message = '') {
+    this.lastError = code;
+    const reason = code === 'not-allowed' ? 'denied' : code;
+    return this.stop({ flushMs: 0, reason, error: message || MIC_MESSAGES[reason] || MIC_MESSAGES.failed });
+  }
+
   _attach(SR, track) {
     const rec = new SR();
     rec.lang = this.options.lang;
@@ -238,100 +282,120 @@ export class MicTranscriber {
     rec.interimResults = true;
     rec.processLocally = this.options.processLocally;
     this.recognition = rec;
+    this.lastError = null;
+    const generation = this.generation;
+    const current = () => this.generation === generation && this.recognition === rec;
+    const attemptAt = Date.now();
+    let started = false;
+    let heardSpeech = false;
 
     rec.onresult = (event) => {
+      if (!current()) return;
       const elapsed = Date.now() - this.t0;
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
         const result = event.results[i];
-        // Interim results are kept for the same reason the tab store keeps them:
-        // the closing sentence is often still interim when recognition ends.
+        if (result[0].transcript.trim()) heardSpeech = true;
         this.store.update(i, result[0].transcript, result.isFinal, elapsed);
       }
+      this._updated();
     };
-
     rec.onerror = (event) => {
+      if (!current() || this.stopping) return;
       this.lastError = event.error;
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-        // Permission was revoked mid-session. Give up quietly; the meeting
-        // transcript continues untouched.
-        this.running = false;
-        this.onStateChange({ running: false, error: 'Microphone access was withdrawn.' });
+      if (['not-allowed', 'service-not-allowed', 'language-not-supported'].includes(event.error)) {
+        this._terminal(event.error, event.message);
       }
     };
-
     rec.onend = () => {
-      if (this.stopping || !this.running) {
-        this.running = false;
-        this.onStateChange({ running: false });
-        return;
-      }
-      if (this.lastError === 'not-allowed' || this.lastError === 'service-not-allowed' ||
-          this.lastError === 'language-not-supported') {
-        this.running = false;
-        this.onStateChange({ running: false });
-        return;
-      }
+      if (!current() || this.stopping) return;
+      clearTimeout(this.startTimer);
+      this.startTimer = null;
+      rec.onresult = rec.onerror = rec.onend = rec.onstart = null;
+      this.recognition = null;
+      this.running = false;
       if (!track || track.readyState !== 'live') {
-        this.running = false;
-        this.onStateChange({ running: false });
+        this._terminal('ended');
         return;
       }
-      // Same restart discipline as the tab recognizer; a new recognizer instance
-      // restarts result indices at zero, so the epoch must advance with it.
-      try {
-        this.store.newEpoch();
-        this._attach(SR, track);
-      } catch (e) {
-        this.running = false;
-        this.onStateChange({ running: false, error: String(e && e.message ? e.message : e) });
+      const healthy = heardSpeech || (started && Date.now() - attemptAt >= 10000 &&
+        (!this.lastError || this.lastError === 'no-speech'));
+      this.failedRestarts = healthy ? 0 : this.failedRestarts + 1;
+      if (this.failedRestarts >= 4) {
+        this._terminal(this.lastError || 'restart-limit');
+        return;
       }
+      const retryTimer = setTimeout(() => {
+        if (this.retryTimer !== retryTimer) return;
+        this.retryTimer = null;
+        if (this.stopping || this.generation !== generation) return;
+        try {
+          this.store.newEpoch();
+          this._attach(SR, track);
+        } catch (e) {
+          this._terminal('restart-failed', String(e?.message || e));
+        }
+      }, healthy ? 100 : 250 * 2 ** (this.failedRestarts - 1));
+      this.retryTimer = retryTimer;
     };
-
     rec.onstart = () => {
+      if (!current() || this.stopping) return;
+      clearTimeout(this.startTimer);
+      this.startTimer = null;
+      started = true;
       this.running = true;
-      this.onStateChange({ running: true });
+      this._notify({ running: true });
     };
-
+    this.startTimer = setTimeout(() => {
+      if (current() && !this.stopping) this._terminal('start-timeout');
+    }, 15000);
     rec.start(track);
   }
 
-  /** Stop recognition and release the microphone. Never throws. */
-  async stop({ flushMs = 800 } = {}) {
-    // Any request still in flight must not come back and open a live microphone.
+  /** Stop only this session's resources, never resources opened during teardown. */
+  async stop({ flushMs = 800, reason, error } = {}) {
     this.discarded = true;
-    // Release before any await: otherwise a stop() that is still awaiting the
-    // graph teardown can come back and stop a stream a LATER open() acquired,
-    // leaving a dead microphone the UI believes is working.
-    if (this.pendingStream) {
-      stopStream(this.pendingStream);
-      this.pendingStream = null;
-    }
+    this.requestId += 1;
+    clearTimeout(this.startTimer);
+    this.startTimer = null;
+    clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    stopStream(this.pendingStream);
+    this.pendingStream = null;
     this.stopping = true;
-    if (this.running && flushMs > 0) {
-      await new Promise((r) => setTimeout(r, flushMs));
-    }
+    const generation = this.generation;
     const rec = this.recognition;
+    const graph = this.graph;
+    const stream = this.stream;
+    const sourceEnded = this.sourceEnded;
+    if (this.running && flushMs > 0) await new Promise(resolve => setTimeout(resolve, flushMs));
     if (rec) {
-      rec.onend = null;
-      rec.onresult = null;
-      rec.onerror = null;
-      rec.onstart = null;
+      rec.onend = rec.onresult = rec.onerror = rec.onstart = null;
       try { rec.stop(); } catch (e) {
         try { rec.abort(); } catch (e2) { /* already gone */ }
       }
     }
-    this.recognition = null;
-    this.running = false;
-
-    try { await this.graph?.cleanup(); } catch (e) { /* best effort */ }
-    this.graph = null;
-    if (this.stream) {
-      for (const t of this.stream.getTracks()) {
-        try { t.stop(); } catch (e) { /* best effort */ }
-      }
+    for (const track of stream?.getAudioTracks() || []) {
+      track.removeEventListener?.('ended', sourceEnded);
     }
-    this.stream = null;
-    this.onStateChange({ running: false });
+    // Release the physical device before awaiting AudioContext.close(). That
+    // promise belongs to this graph and may settle after another Start.
+    stopStream(stream);
+    if (this.generation === generation) {
+      this.recognition = null;
+      this.graph = null;
+      this.stream = null;
+      this.sourceEnded = null;
+      this.running = false;
+      this._notify({ running: false, ...(reason ? { reason, error } : {}) });
+    }
+    let cleanupTimeout;
+    try {
+      await Promise.race([
+        graph?.cleanup(),
+        new Promise(resolve => { cleanupTimeout = setTimeout(resolve, 1000); }),
+      ]);
+    } catch (e) { /* physical tracks are already stopped; cleanup is best effort */ }
+    finally { clearTimeout(cleanupTimeout); }
   }
 
   hasText() {
@@ -341,6 +405,27 @@ export class MicTranscriber {
   /** Drop captured microphone text without disturbing the meeting transcript. */
   clear() {
     this.store.clear();
+    const rec = this.recognition;
+    const active = !this.stopping && (this.running || rec || this.retryTimer);
+    clearTimeout(this.startTimer);
+    this.startTimer = null;
+    clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    if (rec) {
+      rec.onend = rec.onresult = rec.onerror = rec.onstart = null;
+      try { rec.abort(); } catch (e) { /* already ended */ }
+    }
+    this.recognition = null;
+    this.running = false;
+    if (active && this.graph?.track.readyState === 'live') {
+      try {
+        this.store.newEpoch();
+        this._attach(getSpeechRecognition(), this.graph.track);
+      } catch (e) {
+        this._terminal('restart-failed', String(e?.message || e));
+      }
+    }
+    this._updated();
   }
 }
 

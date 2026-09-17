@@ -61,23 +61,52 @@ function validChoice(key, value) {
   return typeof value === typeof DEFAULTS[key];
 }
 
+function validated(patch) {
+  const accepted = {};
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return accepted;
+  for (const key of Object.keys(DEFAULTS)) {
+    if (Object.prototype.hasOwnProperty.call(patch, key) && validChoice(key, patch[key])) {
+      accepted[key] = patch[key];
+    }
+  }
+  return accepted;
+}
+
 let cache = { ...DEFAULTS };
 let loaded = false;
+let writeQueue = Promise.resolve();
+const errorObservers = new Set();
+const errors = { load: null, save: null };
+
+/** Observe persistence failures and recovery. Returns an unsubscribe function. */
+export function onError(callback) {
+  errorObservers.add(callback);
+  return () => errorObservers.delete(callback);
+}
+
+function reportError(operation, error) {
+  if (error === null && errors[operation] === null) return;
+  errors[operation] = error;
+  for (const callback of errorObservers) {
+    try {
+      // Reporting must never turn a recoverable storage failure into a failed
+      // preference operation, even when a view uses an async observer.
+      Promise.resolve(callback({ operation, error })).catch(() => {});
+    } catch (e) { /* one broken observer must not block the others */ }
+  }
+}
 
 /** Read stored preferences. Unknown keys are ignored; missing keys fall back. */
 export async function load() {
   try {
     const got = await chrome.storage.local.get(KEY);
-    const stored = got?.[KEY] || {};
-    const merged = { ...DEFAULTS };
-    for (const k of Object.keys(DEFAULTS)) {
-      if (stored[k] !== undefined && validChoice(k, stored[k])) {
-        merged[k] = stored[k];
-      }
-    }
-    cache = merged;
+    cache = { ...DEFAULTS, ...validated(got?.[KEY]) };
+    reportError('load', null);
   } catch (e) {
-    cache = { ...DEFAULTS };
+    // A failed read is not a pristine installation: a saved microphone opt-out
+    // may exist. Keep capture off until the user explicitly chooses otherwise.
+    cache = { ...DEFAULTS, includeMic: false };
+    reportError('load', String(e?.message ?? e));
   }
   loaded = true;
   return cache;
@@ -94,10 +123,20 @@ export function isLoaded() {
 
 /** Merge and persist. Returns the new full set. */
 export async function set(patch) {
-  cache = { ...cache, ...patch };
-  try {
-    await chrome.storage.local.set({ [KEY]: cache });
-  } catch (e) { /* storage full or unavailable; keep the in-memory value */ }
+  cache = { ...cache, ...validated(patch) };
+  const values = { ...cache };
+  // Each request keeps its own snapshot and waits for the preceding write.
+  // Otherwise a slow earlier write can overwrite a newer choice on completion.
+  writeQueue = writeQueue.then(async () => {
+    try {
+      await chrome.storage.local.set({ [KEY]: values });
+      reportError('save', null);
+    } catch (e) {
+      // Keep the in-memory choice and leave the queue usable for a later retry.
+      reportError('save', String(e?.message ?? e));
+    }
+  });
+  await writeQueue;
   return { ...cache };
 }
 

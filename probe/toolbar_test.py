@@ -243,7 +243,7 @@ def unsaved_state_without_a_prompt(ui, download_dir):
     saved = ui.js("""({
       dot: document.getElementById('downloadBtn').classList.contains('unsaved'),
     })""")
-    ui.check('and stops marking it once downloaded', saved['dot'] is False, saved)
+    ui.check('requesting a download is not proof the file is saved', saved['dot'] is True, saved)
 
     # New speech after a save must mark it again, or the second half of a meeting
     # would look saved when it is not. Appending through the real store, via the

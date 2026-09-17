@@ -32,6 +32,12 @@ CASES += [
     ('ux-bare-shell', ['bare_shell_test.py'], {}),
     ('ux-delete-control', ['delete_control_test.py'], {}),
     ('ux-delete-confirm', ['delete_confirm_test.py'], {}),
+    ('error-paths', ['error_paths_test.py'], {}),
+    ('capture-errors', ['capture_errors_test.py'], {}),
+    ('output-errors', ['output_errors_test.py'], {}),
+    ('persistence-errors', ['persistence_errors_test.py'], {}),
+    ('transfer-errors', ['transfer_errors_test.py'], {}),
+    ('review-errors', ['review_errors_test.py'], {}),
     ('ux-window-round-trip', ['window_round_trip_test.py'], {}),
     ('view-switch', ['view_switch_test.py'], {}),
     ('button-row', ['measure_button_row.py'], {}),
@@ -54,12 +60,9 @@ CASES += [
 # contract between Transcriber and the panel could sit green for a whole session.
 # They are fast and need no display, so they run FIRST: a failure here explains a
 # browser failure that would otherwise take minutes to reproduce.
-UNIT_TESTS = [
-    'mic-merge.test.mjs',
-    'recovery.test.mjs',
-    'fatal-status.test.mjs',
-    'min-chrome-version.test.mjs',
-]
+UNIT_TESTS = sorted(path.name for path in (ROOT / 'probe').glob('*.test.mjs'))
+if not UNIT_TESTS:
+    raise SystemExit('No Node unit tests found.')
 
 if __name__ == '__main__':
     if not os.environ.get('DISPLAY') or os.environ['DISPLAY'] in (':0', ':1'):
@@ -71,7 +74,7 @@ if __name__ == '__main__':
     unit_start = time.monotonic()
     unit_log = OUT / 'unit-tests.log'
     with unit_log.open('w') as output:
-        proc = subprocess.run(['node', '--test', *UNIT_TESTS], cwd=ROOT / 'probe',
+        proc = subprocess.run(['node', '--test', '--test-reporter=tap', *UNIT_TESTS], cwd=ROOT / 'probe',
                               stdout=output, stderr=subprocess.STDOUT, timeout=300)
     unit_result = dict(name='unit-tests', exit_code=proc.returncode,
                        seconds=round(time.monotonic() - unit_start, 1), log=str(unit_log))

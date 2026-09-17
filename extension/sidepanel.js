@@ -16,7 +16,7 @@
  *     selection clears, so the live interim line cannot yank text out from under a
  *     drag in progress.
  */
-import { Transcriber, buildAudioGraph, formatClock } from './transcriber.js';
+import { Transcriber, TranscriptStore, buildAudioGraph, formatClock } from './transcriber.js';
 import * as prefs from './prefs.js';
 import { MicTranscriber, mergeTranscripts, MIC_MESSAGES, stopStream } from './mic.js';
 
@@ -58,6 +58,7 @@ const el = {
   jumpLatest: document.getElementById('jumpLatestBtn'),
   empty: document.getElementById('emptyHint'),
   status: document.getElementById('status'),
+  issues: document.getElementById('issues'),
   dot: document.getElementById('dot'),
   target: document.getElementById('target'),
   modelPanel: document.getElementById('modelPanel'),
@@ -139,14 +140,27 @@ let handedOff = false;
  * through four fixes to the switch itself. So the mismatch is detected once,
  * at startup, and said out loud.
  */
-const PROTOCOL_VERSION = 3;
+const PROTOCOL_VERSION = 4;
+const receiverId = crypto.randomUUID();
 window.PROTOCOL_VERSION = PROTOCOL_VERSION;
 let workerStale = false;
 
 /** True when a reply came from a worker that predates this document. */
 function replyIsStale(reply) {
-  return reply === undefined
-    || (reply && typeof reply === 'object' && reply.workerVersion !== PROTOCOL_VERSION);
+  return !reply || typeof reply !== 'object' || reply.workerVersion !== PROTOCOL_VERSION;
+}
+
+/** A dead message channel must not leave a control disabled forever. */
+async function workerRequest(message) {
+  let timer;
+  try {
+    return await Promise.race([
+      chrome.runtime.sendMessage(message),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`TabScribe's background service did not answer ${message.type}. Keep this view open and retry.`)), 25000);
+      }),
+    ]);
+  } finally { clearTimeout(timer); }
 }
 
 const STALE_WORKER_MESSAGE =
@@ -201,10 +215,17 @@ async function switchLogReset(step) {
 //   chrome.storage.session.get('switchLog')
 // from the panel's devtools console.
 
-async function armCapture({ retries = 0 } = {}) {
-  if (armed) return { ok: true };
+let armingPromise = null;
+function armCapture(options = {}) {
+  if (!armingPromise) armingPromise = armCaptureAttempt(options).finally(() => { armingPromise = null; });
+  return armingPromise;
+}
+
+async function armCaptureAttempt({ retries = 0 } = {}) {
+  if (armed && stream?.getAudioTracks().some(t => t.readyState === 'live') && graph?.track.readyState === 'live') return { ok: true };
+  await teardown();
   try {
-    const res = await chrome.runtime.sendMessage({ type: 'GET_STREAM_ID', tabId: targetTabId });
+    const res = await workerRequest({ type: 'GET_STREAM_ID', tabId: targetTabId });
     if (!res?.ok) return res || { ok: false, error: 'no response from background' };
 
     targetTabId = res.tabId;
@@ -229,10 +250,11 @@ async function armCapture({ retries = 0 } = {}) {
     // and keeps frames flowing so the recognizer can flush trailing segments.
     graph = buildAudioGraph(stream, { monitor: true });
 
+    const capturedStream = stream;
     tracks[0].addEventListener('ended', () => {
+      if (stream !== capturedStream || switching || handedOff) return;
       armed = false;
-      setStatus('Tab audio ended (tab closed, navigated, or stopped sharing).');
-      if (transcriber?.running) stop();
+      void stop({ reason: 'Tab audio ended (the tab closed, navigated, or stopped sharing). The transcript is kept. Click the toolbar icon on the meeting tab, then press Record.' });
     });
 
     armed = true;
@@ -247,11 +269,35 @@ async function armCapture({ retries = 0 } = {}) {
     // rather than reporting a failure that fixes itself.
     if (retries > 0 && /active stream/i.test(message)) {
       await new Promise((r) => setTimeout(r, 400));
-      return armCapture({ retries: retries - 1 });
+      return armCaptureAttempt({ retries: retries - 1 });
     }
+    await teardown();
     return { ok: false, error: message };
   }
 }
+
+// Independent failures stay visible until that operation succeeds. Recognition
+// events must not erase an unsaved-data warning, nor should Copy erase a speech error.
+const issues = new Map();
+function showIssue(key, message = '') {
+  if (message) issues.set(key, message);
+  else issues.delete(key);
+  el.issues.replaceChildren(...Array.from(issues, ([source, text]) => {
+    const p = document.createElement('p');
+    p.dataset.source = source;
+    p.textContent = text;
+    return p;
+  }));
+  el.issues.hidden = issues.size === 0;
+}
+
+function reportUnexpected(error) {
+  showIssue('unexpected', `An unexpected extension error occurred: ${error?.message || error || 'unknown error'}. The transcript is kept. Copy or Download it before reopening TabScribe.`);
+}
+// Last resort for an unanticipated browser callback, not a substitute for the
+// operation-specific handlers below. Leave the original error in DevTools too.
+window.addEventListener('unhandledrejection', event => reportUnexpected(event.reason));
+window.addEventListener('error', event => reportUnexpected(event.error || event.message));
 
 function setStatus(text, isError = false) {
   // Once handed off, this document's story is fixed: it no longer owns the tab, and
@@ -431,18 +477,15 @@ function showHidden() {
 /* ------------------------------------------------------------ unsaved work */
 
 /**
- * Whether the transcript holds anything that has not been downloaded.
- *
- * Compared against the exact text last written to disk rather than a dirty flag:
- * a flag would go stale after Undo, after a hand-off, or after the microphone
- * merged extra text in, and would then either nag about nothing or stay silent
- * over a lost meeting.
+ * A download request cannot prove the file reached disk. Protect text in either
+ * channel, even when the current export preference excludes the microphone.
+ * savedText remains for compatibility with older autosave and hand-off payloads;
+ * those request-time flags are not evidence that deleting the text is safe.
  */
 let savedText = '';
 
 function hasUnsavedTranscript() {
-  if (!lastStore || lastStore.isEmpty()) return false;
-  return transcriptForSaving() !== savedText;
+  return !!((lastStore && !lastStore.isEmpty()) || mic?.hasText());
 }
 
 function refreshUnsavedUi() {
@@ -472,31 +515,55 @@ function refreshUnsavedUi() {
  */
 const AUTOSAVE_KEY = 'liveTranscript';
 let autosaveTimer = null;
+let autosaveQueue = Promise.resolve();
+let autosaveBlocked = false;
+let handoffBlocked = false;
+
+function flushAutosave() {
+  clearTimeout(autosaveTimer);
+  autosaveTimer = null;
+  if (handedOff || switching || autosaveBlocked || handoffBlocked) return Promise.resolve(false);
+  const hasText = (transcriber && !transcriber.store.isEmpty()) || mic?.hasText();
+  const value = hasText ? {
+    snapshot: transcriber?.store.serialize() || new TranscriptStore().serialize(),
+    savedText: '',
+    micText: mic?.hasText() ? mic.store.serialize() : null,
+    at: Date.now(),
+  } : null;
+  autosaveQueue = autosaveQueue.then(async () => {
+    // The receiving document owns persistence after a successful hand-off.
+    if (handedOff || switching || autosaveBlocked || handoffBlocked) return false;
+    try {
+      if (value) await chrome.storage.session.set({ [AUTOSAVE_KEY]: value });
+      else await chrome.storage.session.remove(AUTOSAVE_KEY);
+      showIssue('autosave');
+      return true;
+    } catch (e) {
+      showIssue('autosave', `Transcript autosave failed: ${e?.message || e}. Keep this view open and use Download or Copy before closing.`);
+      return false;
+    }
+  });
+  return autosaveQueue;
+}
 
 function scheduleAutosave() {
-  if (autosaveTimer) return;
-  // Coalesced: recognition updates several times a second and every write would
-  // otherwise hit storage.
-  autosaveTimer = setTimeout(async () => {
-    autosaveTimer = null;
-    try {
-      if (!transcriber || transcriber.store.isEmpty()) {
-        await chrome.storage.session.remove(AUTOSAVE_KEY);
-        return;
-      }
-      await chrome.storage.session.set({
-        [AUTOSAVE_KEY]: {
-          snapshot: transcriber.store.serialize(),
-          savedText,
-          micText: mic?.hasText() ? mic.store.serialize() : null,
-          at: Date.now(),
-        },
-      });
-    } catch (e) {
-      // Persistence is a safety net, never the thing that breaks a meeting.
-      console.warn('TabScribe autosave failed:', e);
-    }
-  }, 1200);
+  if (autosaveTimer || handedOff || switching || autosaveBlocked || handoffBlocked) return;
+  autosaveTimer = setTimeout(() => { void flushAutosave(); }, 1200);
+}
+
+/** Validate all saved channels before replacing either live store. */
+function restoreStoredTranscript(saved) {
+  const meeting = new TranscriptStore();
+  meeting.restore(saved.snapshot);
+  const microphone = new TranscriptStore();
+  if (saved.micText != null) microphone.restore(saved.micText);
+  ensureTranscriber().store.restore(meeting.serialize());
+  if (mic || !microphone.isEmpty()) {
+    if (!mic) mic = new MicTranscriber({ onStateChange: onMicState, onUpdate: onMicUpdate });
+    mic.store.restore(microphone.serialize());
+  }
+  savedText = ''; // Old download-request flags are not evidence of a completed file.
+  render(transcriber.store);
 }
 
 /** Restore a transcript left behind by a previous panel document. */
@@ -504,18 +571,14 @@ async function restoreAutosave() {
   try {
     const stored = await chrome.storage.session.get(AUTOSAVE_KEY);
     const saved = stored[AUTOSAVE_KEY];
-    if (!saved?.snapshot?.segments?.length) return false;
-    ensureTranscriber();
-    transcriber.store.restore(saved.snapshot);
-    if (typeof saved.savedText === 'string') savedText = saved.savedText;
-    if (saved.micText?.segments?.length) {
-      if (!mic) mic = new MicTranscriber({ onStateChange: onMicState });
-      mic.store.restore(saved.micText);
-    }
-    render(transcriber.store);
-    return true;
+    if (!saved) return false;
+    restoreStoredTranscript(saved);
+    showIssue('restore');
+    return !transcriber.store.isEmpty() || !!mic?.hasText();
   } catch (e) {
-    console.warn('TabScribe could not restore the previous transcript:', e);
+    // Do not overwrite an unreadable recovery copy with an empty/new document.
+    autosaveBlocked = true;
+    showIssue('restore', `The previous transcript could not be restored: ${e?.message || e}. Its recovery copy was not overwritten. Keep this view open and Download any new transcript before closing.`);
     return false;
   }
 }
@@ -525,10 +588,19 @@ function render(store) {
   // Hidden keys are filtered here, and only here: the store still holds them, so
   // Copy, Download, and the word count are unaffected by clearing the screen.
   const all = store.liveSegments();
+  // Restoring a newer snapshot can remove rows (for example after Delete in
+  // the other view). Do not leave old DOM text selectable after it leaves the
+  // store. Preserve existing nodes for every key that is still present.
+  const keys = new Set(all.map(segment => segment.key));
+  for (const [key, entry] of nodes) {
+    if (!keys.has(key)) { entry.row.remove(); nodes.delete(key); }
+  }
+  for (const key of screenHidden) if (!keys.has(key)) screenHidden.delete(key);
   const segs = screenHidden.size ? all.filter((s) => !screenHidden.has(s.key)) : all;
 
   el.empty.style.display = all.length === 0 ? '' : 'none';
-  el.copy.disabled = el.download.disabled = el.clear.disabled = store.isEmpty();
+  el.copy.disabled = store.isEmpty();
+  el.download.disabled = el.clear.disabled = store.isEmpty() && !mic?.hasText();
   el.clearScreen.disabled = segs.length === 0;
   hiddenNoticeRefresh(store);
   refreshUnsavedUi();
@@ -666,12 +738,15 @@ async function autoCopySelection() {
   }
   if (text === lastAutoCopied) return;
 
-  const ok = await writeClipboard(text);
+  const requestId = ++clipboardRequestId;
+  const ok = await writeClipboard(text, requestId);
+  if (requestId !== clipboardRequestId) return;
   if (!ok) {
     // Do not claim success. The manual Copy button remains available.
-    setStatus('Auto-copy failed — press Ctrl+C to copy the selection.', true);
+    showIssue('copy', 'Auto-copy failed — press Ctrl+C to copy the selection.');
     return;
   }
+  showIssue('copy');
   lastAutoCopied = text;
   showToast('Copied');
 }
@@ -714,7 +789,7 @@ function showModelPanel({ title, body, state, phase, hint = true, actions = true
   el.modelPanel.classList.remove('failed', 'idle');
   if (phase) el.modelPanel.classList.add(phase);
   if (title !== undefined) el.modelTitle.textContent = title;
-  if (body !== undefined) el.modelBody.innerHTML = body;
+  if (body !== undefined) el.modelBody.textContent = body;
   if (state !== undefined) el.modelState.textContent = state;
   el.modelHint.hidden = !hint;
   el.modelActions.hidden = !actions;
@@ -762,7 +837,7 @@ function onModelProgress(info) {
       showModelPanel({
         title: 'First run: one-time model download',
         body: `TabScribe transcribes on your own machine using Chrome's ${lang} speech ` +
-              'model — roughly 300&nbsp;MB. It downloads once, then works instantly and ' +
+              'model — roughly 300 MB. After installation, it can work ' +
               'offline. You can leave this open and keep using the tab.',
         state: 'Downloading…',
       });
@@ -782,8 +857,7 @@ function onModelProgress(info) {
         title: 'Model download failed',
         body: info.error
           ? `Chrome reported: ${info.error}`
-          : 'Chrome could not finish downloading the model. This is usually a network ' +
-            'problem — the download resumes from scratch, so a stable connection helps.',
+          : 'Chrome could not finish installing the model. Check your connection and free disk space, then retry the download.',
         state: 'Failed',
         phase: 'failed',
         hint: false,
@@ -797,8 +871,7 @@ function onModelProgress(info) {
       showModelPanel({
         title: 'On-device model not available',
         body: info.phase === 'unsupported'
-          ? 'This Chrome build does not offer on-device speech recognition. Chrome 150+ ' +
-            'is required.'
+          ? 'This browser does not expose on-device speech recognition. Use a current Google Chrome build with that feature enabled.'
           : `Chrome has no on-device model for ${lang} on this device.`,
         state: 'Unavailable',
         phase: 'failed',
@@ -817,12 +890,16 @@ function onModelProgress(info) {
 }
 
 async function useCloudInstead() {
+  if (stopInProgress || el.record.disabled) return;
+  // Only this explicit choice may supersede local preparation. Abort its wait
+  // before Start's busy guard; a late install result must not revive it.
+  activeStart?.abort();
+  activeStart = null;
   el.localOnly.checked = false;
   savePrefsFromUi();
   hideModelPanel();
-  setStatus('Switched to Chrome\'s cloud recognition. Audio is sent to Google.');
   // Reached from the notice's own button, so the activation is still live.
-  if (!el.record.disabled) await start({ gesture: true });
+  await start({ gesture: true });
 }
 
 async function retryModel() {
@@ -904,24 +981,26 @@ prefs.onChange((diff) => {
 
 /* ------------------------------------------------------------------ pop-out */
 
-/**
- * What a fatal recognition error actually means, in words that name the fix.
- *
- * The codes are not for the user: "language-not-supported" is what Chrome says
- * when on-device recognition is on and the language pack is not installed —
- * which is a thing they can fix, if anyone tells them.
- */
-function fatalRecognitionMessage(code, lang) {
-  if (code === 'language-not-supported') {
-    return `The on-device ${lang || 'speech'} model is not installed in this Chrome. `
-      + 'Press Record again to download it, or uncheck "On-device only" to use '
-      + 'the cloud service.';
-  }
-  if (code === 'not-allowed' || code === 'service-not-allowed') {
-    return 'Chrome blocked speech recognition for this page. Check Chrome\'s site '
-      + 'and microphone settings, then press Record again.';
-  }
-  return `Recognition stopped: ${code}.`;
+/** Explain the failed attempt, not preferences changed while it was running. */
+function fatalRecognitionMessage(code, message = '') {
+  const { lang, processLocally } = transcriber?.options || {
+    lang: el.lang.value, processLocally: el.localOnly.checked,
+  };
+  const remedies = {
+    'language-not-supported': processLocally
+      ? `Chrome could not use on-device recognition for language ${lang}. Press Record to check the model again, or choose another language in Preferences.`
+      : `Chrome's cloud service could not recognize language ${lang}. Choose another language in Preferences, then press Record.`,
+    'not-allowed': 'Chrome denied speech recognition. Check permissions for TabScribe and any browser policy, then press Record to retry.',
+    'service-not-allowed': 'Chrome refused the selected speech service. Check browser policy or choose another recognition mode in Preferences, then press Record.',
+    'audio-capture': 'Speech recognition lost its audio input. Click the TabScribe toolbar icon on the meeting tab, then press Record.',
+    'network': 'The speech service connection failed. Check your connection, then press Record to retry.',
+    'bad-grammar': 'Chrome rejected the speech recognition configuration. Reload TabScribe after downloading your transcript.',
+    'phrases-not-supported': 'Chrome does not support this speech recognition configuration. Update Chrome, then retry Record.',
+    'restart-failed': 'Speech recognition could not restart. Press Record to retry. The transcript is kept.',
+    'restart-limit': 'Speech recognition repeatedly stopped without making progress. Press Record to retry. The transcript is kept.',
+  };
+  const explanation = remedies[code] || 'Speech recognition failed. Press Record to retry. The transcript is kept.';
+  return `${explanation} (${code || 'unknown'}${message ? `: ${message}` : ''})`;
 }
 
 /** A Transcriber that holds text without a recognition session running. */
@@ -930,17 +1009,22 @@ function ensureTranscriber() {
   transcriber = new Transcriber({
     onUpdate: render,
     onStatus: (s, detail = {}) => {
+      // Stop owns its message even when Chrome delivers onend after its promise
+      // resolves. Transcriber.stopping resets only when a new attempt starts.
+      if (s === 'stopped' && (stopInProgress || transcriber?.stopping)) return;
       setState(s === 'listening' ? 'listening' : s);
       if (s === 'listening') setStatus('Listening. Select any text to copy part of it.');
       else if (s === 'restarting') setStatus('Reconnecting recognizer…');
       else if (s === 'stopped') {
-        // A fatal stop keeps its reason. onerror fired microseconds ago and set
-        // a message; overwriting it with a bare "Stopped." is what made every
-        // distinct failure look identical — and left a real report of
-        // "it wrote Stopped right after start" with nothing to act on.
+        setRecording(false);
+        el.record.disabled = false;
+        // The optional microphone must not continue after meeting recognition ends.
+        if (mic) mic.stop({ flushMs: 0 }).catch(() => {});
         if (detail.fatal) {
           setState('error');
-          setStatus(fatalRecognitionMessage(detail.error, el.lang.value), true);
+          setStatus(fatalRecognitionMessage(detail.error, detail.message), true);
+        } else if (detail.trackEnded) {
+          setStatus('Tab audio ended. The transcript is kept. Click the toolbar icon on the meeting tab, then press Record.');
         } else {
           setStatus('Stopped.');
         }
@@ -948,7 +1032,7 @@ function ensureTranscriber() {
     },
     onError: (code, message) => {
       setState('error');
-      setStatus(`Recognition error: ${code}${message ? ` — ${message}` : ''}`, true);
+      setStatus(fatalRecognitionMessage(code, message), true);
     },
   });
   return transcriber;
@@ -1016,96 +1100,95 @@ function setPopoutLabel(which) {
  * The transcript rides across in the same hand-off snapshot pop-out uses, so the
  * switch is not a reset in either direction.
  */
+let switching = false;
+
+async function releaseForTransfer() {
+  switching = true;
+  activeStart?.abort();
+  activeStart = null;
+  clearTimeout(autosaveTimer);
+  autosaveTimer = null;
+  await autosaveQueue;
+  if (armingPromise) await armingPromise;
+  if (transcriber?.recognition) await transcriber.stop({ flushMs: 400 });
+  if (mic) await mic.stop({ flushMs: 400 });
+  const payload = {
+    snapshot: transcriber?.store.serialize() || new TranscriptStore().serialize(),
+    micText: mic?.hasText() ? mic.store.serialize() : null,
+    savedText: '',
+  };
+  await teardown();
+  el.record.disabled = true;
+  return payload;
+}
+
+async function recoverTransfer(wasRunning, message, released, safeToResume = false) {
+  switching = false;
+  if (!safeToResume) {
+    // A lost reply is not a cancelled transfer: the receiver may already own it.
+    handedOff = true;
+    handoffBlocked = true;
+    el.record.disabled = true;
+    el.popout.disabled = true;
+    setRecording(false);
+    setState('error');
+    setStatus('Recording paused in this view. The switch outcome could not be confirmed.', true);
+    showIssue('switch', `${message} The switch outcome could not be confirmed. This view will not record or autosave. Copy or Download its transcript. Check the other TabScribe view; if none is open, close this view and reopen TabScribe from the toolbar icon on the meeting tab.`);
+    return;
+  }
+  handedOff = false;
+  handoffBlocked = false;
+  if (released) {
+    el.record.disabled = false;
+    const cap = await armCapture({ retries: 3 });
+    if (cap.ok && wasRunning) await start({ allowMic: true });
+    else if (!cap.ok) {
+      setState('error');
+      setStatus(`Could not restore tab audio: ${cap.error || 'click the toolbar icon on the meeting tab'}. The transcript is kept.`, true);
+    }
+  }
+  showIssue('switch', `${message} The transcript remains in this view.`);
+  el.popout.disabled = false;
+  scheduleAutosave();
+}
+
 async function backToSidebar(pendingOpen) {
   el.popout.disabled = true;
   const wasRunning = !!transcriber?.running;
+  let released = false;
+  let safeToResume = !handedOff;
   await switchLogReset(`backToSidebar running=${wasRunning}`);
   try {
-    setStatus('Returning to the sidebar…');
-
-    // Announce the switch BEFORE tearing anything down. The panel opens straight
-    // away — sidePanel.open() has to fire inside the click to keep the gesture —
-    // so it can be up and running long before the snapshot below is written.
-    // This tells it a hand-off is genuinely coming and to wait for it, however
-    // long the recognizer's final flush takes. Waiting on a fixed timer instead
-    // is what let a slow teardown drop the resume flag and silently end the
-    // meeting.
-    //
-    // It is also the gate. An old worker still running from before a reload
-    // does not know this message and returns undefined; a versioned worker
-    // answers with its version. Finding that out HERE, while the meeting is
-    // still recording, is the difference between a warning and a lost meeting.
-    let announced;
-    try {
-      announced = await chrome.runtime.sendMessage({ type: 'SWITCH_PENDING', resume: wasRunning });
-    } catch (e) {
-      announced = undefined;
-      switchLog('SWITCH_PENDING threw', String(e && e.message ? e.message : e));
-    }
+    const announced = await workerRequest({ type: 'SWITCH_PENDING', resume: wasRunning });
     if (replyIsStale(announced)) {
       noteStaleWorker('SWITCH_PENDING', announced);
-      // Nothing has been torn down. Let the panel that just opened know it has
-      // nothing to wait for, and keep this window exactly as it was.
-      pendingOpen.catch(() => {});
-      setStatus(STALE_WORKER_MESSAGE, true);
-      el.popout.disabled = false;
-      return;
+      throw new Error(STALE_WORKER_MESSAGE);
     }
-    switchLog('announced SWITCH_PENDING');
-
-    // Release the capture: the tab can only be captured once, so the panel
-    // cannot arm until this window lets go.
-    if (transcriber?.running) {
-      await transcriber.stop({ flushMs: 400 });
-    }
-    const snapshot = transcriber ? transcriber.store.serialize() : null;
-    await teardown();
-
-    // Hand the transcript over. The panel is waiting on exactly this. Logged
-    // BEFORE the send: the worker broadcasts SWITCHED_BACK as it stores the
-    // snapshot, the survivor resumes, and this window can be closing before a
-    // post-send log line would land.
-    await switchLog('BACK_TO_PANEL sending', {segments: snapshot?.segments?.length ?? 0,
-                                              resume: wasRunning});
-    const handed = await chrome.runtime.sendMessage({
-      type: 'BACK_TO_PANEL',
-      snapshot,
-      resume: wasRunning,
-    });
-    await switchLog('BACK_TO_PANEL sent', {ok: !!handed?.ok, error: handed?.error ?? null,
-                                           reply: handed === undefined ? 'undefined' : 'object'});
-
-    // The open was started synchronously in the click handler, above any await,
-    // because the gesture cannot survive this function's awaits.
+    if (!announced?.ok) throw new Error(`Could not prepare the sidebar: ${announced?.error || 'no reply'}`);
+    await switchLog('announced SWITCH_PENDING');
+    // Opening was invoked synchronously in the click handler. Its failure must
+    // be known BEFORE the source releases audio or stages any transcript.
     const opened = await pendingOpen;
-    switchLog('sidePanel.open result', opened);
-
-    // Close this window ONLY when the hand-off actually happened: the panel is
-    // open AND the worker confirmed it stored the snapshot. Closing on the open
-    // alone was how a failed hand-off took a live meeting with it — the panel
-    // came up with nothing to claim, and the window that still had the
-    // transcript was already gone.
-    if (!handed?.ok || !opened?.ok) {
-      await armCapture();
-      if (wasRunning) {
-        // The meeting was live; it is the thing worth restoring first.
-        try { await start({ allowMic: true }); } catch (e) { /* status says why */ }
-      }
-      const why = !handed?.ok
-        ? (replyIsStale(handed) ? STALE_WORKER_MESSAGE
-           : `Could not hand the transcript to the sidebar: ${handed?.error || 'no reply'}`)
-        : `Could not reopen the sidebar: ${opened?.error || 'unknown error'}`;
-      if (!handed?.ok && replyIsStale(handed)) noteStaleWorker('BACK_TO_PANEL', handed);
-      setStatus(why, true);
-      el.popout.disabled = false;
-      return;
-    }
-    // The panel is open and owns the transcript now; this window's job is done.
+    await switchLog('sidePanel.open result', opened);
+    if (!opened?.ok) throw new Error(`Could not reopen the sidebar: ${opened?.error || 'no reply'}`);
+    setStatus('Returning to the sidebar…');
+    released = true;
+    const payload = await releaseForTransfer();
+    await switchLog('BACK_TO_PANEL sending', { segments: payload.snapshot.segments.length, resume: wasRunning });
+    safeToResume = false;
+    const handed = await workerRequest({ type: 'BACK_TO_PANEL', ...payload, resume: wasRunning });
+    safeToResume = handed?.ok === false && handed.safeToResume === true;
+    await switchLog('BACK_TO_PANEL sent', { ok: !!handed?.ok, error: handed?.error ?? null });
+    if (!handed?.ok) throw new Error(`Could not hand the transcript to the sidebar: ${handed?.error || 'no reply'}`);
+    handedOff = true;
+    showIssue('switch');
     window.close();
   } catch (e) {
-    await armCapture();
-    setStatus(`Could not reopen the sidebar: ${e && e.message ? e.message : e}`, true);
-    el.popout.disabled = false;
+    if (safeToResume) {
+      try { await chrome.storage.session.remove('switchPending'); } catch (cleanupError) { /* expires */ }
+    }
+    await recoverTransfer(wasRunning, String(e?.message || e), released, safeToResume);
+    if (workerStale) setStatus(STALE_WORKER_MESSAGE, true);
   }
 }
 
@@ -1131,91 +1214,72 @@ function requestSidebarOpen() {
 
 async function popOut() {
   el.popout.disabled = true;
+  if (handoffBlocked) {
+    // A failed receiver owns only a recovery snapshot. OPEN_WINDOW can create a
+    // new transfer, so focus the existing window directly without sending text.
+    try {
+      const { popoutWindowId } = await chrome.storage.session.get('popoutWindowId');
+      if (!Number.isInteger(popoutWindowId) || popoutWindowId < 0) {
+        throw new Error('No existing TabScribe window could be identified.');
+      }
+      await chrome.windows.update(popoutWindowId, { focused: true, drawAttention: true });
+    } catch (e) {
+      showIssue('switch', `Could not focus the TabScribe window: ${e?.message || e}. Recording remains paused in this view. Copy or Download its transcript. Check the other view and retry the switch there; if none is open, close this view and reopen TabScribe from the toolbar icon on the meeting tab.`);
+    } finally {
+      el.popout.disabled = false;
+    }
+    return;
+  }
   const wasRunning = !!transcriber?.running;
+  let released = false;
+  let safeToResume = !handedOff;
   await switchLogReset(`popOut running=${wasRunning}`);
   try {
+    // Verify the worker before interrupting the current session.
+    const host = await workerRequest({ type: 'GET_HOST_WINDOW' });
+    if (replyIsStale(host)) {
+      noteStaleWorker('GET_HOST_WINDOW', host);
+      throw new Error(STALE_WORKER_MESSAGE);
+    }
+    if (!host?.ok) throw new Error(`Could not open the window: ${host?.error || 'no reply'}`);
     setStatus('Opening window…');
-
-    // sidePanel.close() needs the id of the browser window hosting this panel, and
-    // the panel document cannot determine that itself. Ask before releasing the tab,
-    // so a failure here costs nothing.
-    let sourceWindowId;
-    try {
-      const host = await chrome.runtime.sendMessage({ type: 'GET_HOST_WINDOW' });
-      if (host?.ok) sourceWindowId = host.windowId;
-    } catch (e) { /* close is best-effort */ }
-
-    // Stop recognition and release the capture BEFORE the window opens: the tab can
-    // only be captured once, so the window cannot arm until this document lets go.
-    if (transcriber?.running) {
-      await transcriber.stop({ flushMs: 400 });
+    let payload = {};
+    if (!handedOff) {
+      released = true;
+      payload = await releaseForTransfer();
     }
-    const snapshot = transcriber ? transcriber.store.serialize() : null;
-    await teardown();
-
-    const res = await chrome.runtime.sendMessage({
-      type: 'OPEN_WINDOW',
-      snapshot,
-      resume: wasRunning,
-      sourceWindowId,
-      width: prefs.get().windowWidth,
-      height: prefs.get().windowHeight,
+    safeToResume = false;
+    const res = await workerRequest({
+      type: 'OPEN_WINDOW', ...payload, resume: wasRunning,
+      sourceWindowId: host.windowId,
+      width: prefs.get().windowWidth, height: prefs.get().windowHeight,
     });
-
-    switchLog('OPEN_WINDOW reply', {ok: !!res?.ok, reused: !!res?.reused,
-                                      panelClosed: !!res?.panelClosed, error: res?.error});
-    if (!res?.ok) {
-      // Re-arm here so a failed pop-out does not leave the user with nothing.
-      handedOff = false;
-      const cap = await armCapture();
-      setStatus(res?.error || 'Could not open the window.', true);
-      if (cap.ok && wasRunning) await start();
-      el.popout.disabled = false;
+    safeToResume = released && res?.ok === false && res.safeToResume === true;
+    switchLog('OPEN_WINDOW reply', { ok: !!res?.ok, reused: !!res?.reused, panelClosed: !!res?.panelClosed, error: res?.error });
+    if (!res?.ok) throw new Error(`Could not open the window: ${res?.error || 'no reply'}`);
+    if (res.reused && released) {
+      // Focusing another view is not a transfer of this document's transcript.
+      await recoverTransfer(wasRunning, 'Another TabScribe window is already open; this transcript was not transferred.', true, true);
       return;
     }
-
-    if (res.reused) {
-      // The window already holds this tab's capture, so re-arming here is
-      // guaranteed to fail with "Cannot capture a tab with an active stream".
-      // Focusing it is the whole action; leave the hand-off state alone.
-      if (handedOff) {
-        el.status.textContent = 'TabScribe is already open in a window.';
-        el.status.classList.remove('error');
-        el.popout.disabled = false;
-        return;
-      }
-      setStatus('TabScribe is already open in a window.');
-      const cap = await armCapture();
-      if (cap.ok && wasRunning) await start();
-      el.popout.disabled = false;
-      return;
-    }
-
-    // The window now owns the capture. Leave this document inert rather than
-    // fighting it for the tab. handedOff is set BEFORE the message so a late 'end'
-    // event from the recognizer cannot overwrite it.
-    //
-    // Normally this panel is already closing (the background closed it via
-    // sidePanel.close), so this state is only ever seen when that failed — the
-    // message is written for that case.
     handedOff = true;
+    switching = false;
+    clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+    showIssue('switch');
     setState('idle');
-    // The window owns the transcript now. A recovery copy left behind here would
-    // let this dead panel restore and export text the live view no longer has.
     clearedSnapshot = null;
     el.undoBar.hidden = true;
-    el.status.textContent = res.panelClosed
-      ? 'Moved to its own window.'
-      : 'Moved to its own window. You can close this panel.';
+    el.status.textContent = res.reused ? 'TabScribe is already open in a window.'
+      : res.panelClosed ? 'Moved to its own window.' : 'Moved to its own window. You can close this panel.';
     el.status.classList.remove('error');
     el.record.disabled = true;
     setRecording(false);
     el.popout.disabled = false;
     setPopoutLabel('focus');
   } catch (e) {
-    handedOff = false;
-    setStatus(String(e && e.message ? e.message : e), true);
-    el.popout.disabled = false;
+    await recoverTransfer(wasRunning, String(e?.message || e), released, safeToResume);
+    if (workerStale) setStatus(STALE_WORKER_MESSAGE, true);
   }
 }
 
@@ -1230,27 +1294,50 @@ async function popOut() {
  * autosave, and the meeting stops.
  */
 async function claimHandoff({ waitMs = 0 } = {}) {
+  if (workerStale) return { received: false, resume: false };
   const deadline = Date.now() + waitMs;
+  let restored = false;
   for (;;) {
     try {
-      const res = await chrome.runtime.sendMessage({ type: 'CLAIM_HANDOFF' });
-      if (res?.ok && res.snapshot) {
-        ensureTranscriber().store.restore(res.snapshot);
-        render(transcriber.store);
+      const res = await workerRequest({ type: 'CLAIM_HANDOFF', receiverId });
+      if (!res?.ok) throw new Error(res?.error || 'The background service did not return a transcript.');
+      if (res.handoffId) {
+        switching = true;
+        restoreStoredTranscript(res);
+        restored = true;
+        const accepted = await workerRequest({ type: 'ACK_HANDOFF', handoffId: res.handoffId, receiverId });
+        if (!accepted?.ok) throw new Error(accepted?.error || 'The receiver could not confirm the transcript transfer.');
+        switching = false;
+        handoffBlocked = false;
+        showIssue('switch');
         return { received: true, resume: !!res.resume };
       }
-    } catch (e) { /* no handoff waiting */ }
-    if (Date.now() >= deadline) return { received: false, resume: false };
+      if (Date.now() >= deadline) {
+        if (waitMs) throw new Error('The announced transcript transfer did not arrive.');
+        return { received: false, resume: false };
+      }
+    } catch (e) {
+      switching = false;
+      // A failed receiver must not overwrite the source's recovery copy or arm
+      // capture independently. The source will resume or show its own failure.
+      handoffBlocked = true;
+      el.record.disabled = true;
+      showIssue('switch', `Could not receive the transcript: ${e?.message || e}. Recording is paused in this view. Copy or Download any recovered text. If another TabScribe view is open, check it and retry the switch there; otherwise close and reopen TabScribe from the toolbar icon on the meeting tab.`);
+      return { received: false, resume: false, failed: true, restored };
+    }
     await new Promise((r) => setTimeout(r, 120));
   }
 }
 
 async function refreshTarget() {
-  const res = await chrome.runtime.sendMessage({ type: 'GET_TARGET' });
+  const res = await workerRequest({ type: 'GET_TARGET' });
   if (res?.ok) {
     targetTabId = res.tabId;
     targetTitle = res.title || `tab ${res.tabId}`;
     refreshRecordTitle();
+    showIssue('target');
+  } else {
+    showIssue('target', `Could not identify the meeting tab: ${res?.error || 'no reply'}. Click the TabScribe toolbar icon on that tab.`);
   }
 }
 
@@ -1263,7 +1350,19 @@ async function refreshTarget() {
  * microphone request without a gesture is auto-denied with no prompt shown, and
  * reporting that as a refusal is the bug this whole path exists to avoid.
  */
+let activeStart = null;
+let stopInProgress = false;
+
 async function start({ gesture = false, allowMic = false } = {}) {
+  if (stopInProgress || handedOff || handoffBlocked || switching) return { ok: false, cancelled: true };
+  if (activeStart && !activeStart.signal.aborted && el.record.getAttribute('aria-pressed') === 'true') {
+    return { ok: false, busy: true };
+  }
+  activeStart?.abort();
+  modelPreviewVersion += 1;
+  const attempt = new AbortController();
+  activeStart = attempt;
+  const current = () => activeStart === attempt && !attempt.signal.aborted;
   el.record.disabled = true;
   // FIRST, synchronously: the user's click is a live gesture right now, and
   // everything below this line awaits, which would destroy it.
@@ -1298,11 +1397,12 @@ async function start({ gesture = false, allowMic = false } = {}) {
     // 1. Make sure the tab audio is captured. Normally armCapture() already ran when
     //    the panel opened; this covers a re-arm after the track ended.
     const cap = await armCapture();
+    if (!current()) return { ok: false, cancelled: true };
     if (!cap.ok) {
       if (cap.needsInvocation) {
         throw new Error(
           'Click the TabScribe toolbar icon on the tab you want to transcribe, ' +
-          'then press Start.'
+          'then press Record.'
         );
       }
       throw new Error(cap.error || 'Could not capture this tab\'s audio.');
@@ -1314,14 +1414,16 @@ async function start({ gesture = false, allowMic = false } = {}) {
       setStatus('Checking on-device model…');
       const model = await Transcriber.ensureModel(lang, {
         allowCloudFallback: false,
-        onStatus: setStatus,
-        onProgress: onModelProgress,
+        signal: attempt.signal,
+        onStatus: (text) => { if (current()) setStatus(text); },
+        onProgress: (info) => { if (current()) onModelProgress(info); },
       });
+      if (!current()) return { ok: false, cancelled: true };
       if (!model.ok) {
         if (model.availability === 'unsupported') {
           throw new Error(
             'This Chrome build does not expose on-device speech recognition. ' +
-            'Chrome 150+ is required, or uncheck "On-device only".'
+            'Use a current Google Chrome build with on-device speech enabled, or explicitly choose cloud recognition in Preferences.'
           );
         }
         throw new Error(
@@ -1336,23 +1438,33 @@ async function start({ gesture = false, allowMic = false } = {}) {
     // 3. Recognize from the graph's output track. ensureTranscriber() reuses an
     //    existing instance so a transcript restored from a pop-out handoff, or kept
     //    from a previous Start/Stop cycle, is appended to rather than discarded.
+    if (!current()) return { ok: false, cancelled: true };
     ensureTranscriber();
+    if (graph.ctx.state === 'suspended') {
+      await graph.ctx.resume();
+      if (!current()) return { ok: false, cancelled: true };
+      if (graph.ctx.state !== 'running') throw new Error('Chrome kept tab audio suspended. Click Record to retry audio playback.');
+    }
 
     transcriber.start(graph.track, { lang, processLocally: localOnly });
 
     setRecording(true);
     el.record.disabled = false;
-    setStatus('Listening. Select any text to copy part of it.');
+    if (!transcriber.running) setStatus('Starting speech recognition…');
     if (allowMic) switchLog('resume start ok');
 
     // Strictly after the meeting transcription is live, and never awaited into
     // its failure path: the microphone is a bonus for the saved file and must
     // not be able to break, delay, or fail the thing the user actually asked for.
     attachMic(pendingMic, lang, localOnly);
+    return { ok: true };
   } catch (e) {
+    if (!current()) return { ok: false, cancelled: true };
+    // A failed availability poll can abandon an installation without a final
+    // progress callback. Stop its UI, but retain an explicit failed-model panel.
+    if (modelTimer) hideModelPanel();
     if (allowMic) switchLog('resume start FAILED', String(e && e.message ? e.message : e));
-    setState('error');
-    setStatus(String(e && e.message ? e.message : e), true);
+    const failure = String(e && e.message ? e.message : e);
     // The meeting failed to start, so release a microphone opened for it.
     if (pendingMic) {
       pendingMic.then((r) => stopStream(r && r.stream)).catch(() => {});
@@ -1365,8 +1477,12 @@ async function start({ gesture = false, allowMic = false } = {}) {
       try { await transcriber.stop({ flushMs: 0 }); } catch (e2) { /* best effort */ }
     }
     await teardown();
+    if (!current()) return { ok: false, cancelled: true };
     el.record.disabled = false;
     setRecording(false);
+    setState('error');
+    setStatus(`Could not start transcription: ${failure} The transcript is kept. Press Record to retry.`, true);
+    return { ok: false, error: failure };
   }
 }
 
@@ -1386,28 +1502,39 @@ async function teardown() {
   stream = null;
 }
 
-async function stop() {
+async function stop({ reason = '' } = {}) {
+  if (stopInProgress) return;
+  stopInProgress = true;
+  activeStart?.abort();
+  activeStart = null;
+  hideModelPanel();
   setRecording(false);
-  // Disabled for the duration of the teardown. stop() awaits the microphone and
-  // then the recognizer's final flush — around two seconds — and a press inside
-  // that window used to start a new session that this function then stomped on,
-  // leaving the toggle reading "recording" while the status read "Stopped."
   el.record.disabled = true;
   setStatus('Finishing…');
-  // Stop the microphone first and independently; its text is already banked in
-  // its own store, and a failure here must not delay finishing the meeting.
-  if (mic) {
-    try { await mic.stop({ flushMs: 600 }); } catch (e) { /* best effort */ }
+  let failure = '';
+  try {
+    if (mic) {
+      try { await mic.stop({ flushMs: 600 }); } catch (e) { /* microphone is independent */ }
+    }
+    if (transcriber) {
+      await transcriber.stop({ flushMs: reason ? 0 : 1500 });
+      render(transcriber.store);
+    }
+  } catch (e) {
+    failure = `Could not finish speech recognition: ${e?.message || e}. The transcript is kept; use Copy or Download.`;
+    await teardown();
+  } finally {
+    stopInProgress = false;
+    // A switch can finish while Stop is flushing. Its ownership and paused
+    // failure must survive this older continuation.
+    const transferOwnsView = handedOff || handoffBlocked || switching;
+    if (!transferOwnsView) {
+      setState(failure ? 'error' : 'idle');
+      setStatus(failure || reason || 'Stopped. Transcript kept — use Copy or Download.', !!failure);
+    }
+    el.record.disabled = transferOwnsView;
+    setRecording(false);
   }
-  if (transcriber) {
-    // Give the recognizer a moment to finalize the sentence in flight.
-    await transcriber.stop({ flushMs: 1500 });
-    render(transcriber.store);
-  }
-  // The capture stays armed so Start works again without another toolbar click.
-  setState('idle');
-  setStatus('Stopped. Transcript kept — use Copy or Download.');
-  el.record.disabled = false;
 }
 
 // Release the capture when the panel goes away, so the tab is not held open.
@@ -1443,6 +1570,16 @@ async function reclaimAfterSwitch({ viaFocus = false } = {}) {
     if (wait) setStatus('Bringing the transcript back…');
     const handoff = await claimHandoff({ waitMs: wait });
     switchLog('survivor claim', {waited: wait, ...handoff});
+    if (handoff.failed) return;
+    if (!handoff.received) {
+      if (handoffBlocked) return;
+      // Focus can precede SWITCH_PENDING and the return snapshot. The old
+      // sidebar must not seize capture while its popup is still the owner.
+      try {
+        const stored = await chrome.storage.session.get('popoutWindowId');
+        if (stored.popoutWindowId != null) return;
+      } catch (e) { return; } // Unknown ownership is not permission to capture.
+    }
 
     // The window may still be releasing the tab; the same retry init() uses.
     const cap = await armCapture({ retries: handoff.received ? 6 : 0 });
@@ -1500,7 +1637,7 @@ function requestMicStream() {
   try {
     // Ownership matters: the instance tracks the in-flight request so turning
     // the option off while the prompt is open releases whatever arrives later.
-    if (!mic) mic = new MicTranscriber({ onStateChange: onMicState });
+    if (!mic) mic = new MicTranscriber({ onStateChange: onMicState, onUpdate: onMicUpdate });
     return mic.open();
   } catch (e) {
     return Promise.resolve({ ok: false, reason: 'failed',
@@ -1528,10 +1665,11 @@ async function attachMic(pending, lang, processLocally) {
     if (res.reason !== 'cancelled') disableMic(res.reason, res.error);
     return;
   }
-  if (!el.includeMic.checked) { stopStream(res.stream); return; }
+  if (!el.includeMic.checked || !transcriber?.recognition || transcriber.stopping
+      || el.record.getAttribute('aria-pressed') !== 'true') { stopStream(res.stream); return; }
 
   try {
-    if (!mic) mic = new MicTranscriber({ onStateChange: onMicState });
+    if (!mic) mic = new MicTranscriber({ onStateChange: onMicState, onUpdate: onMicUpdate });
     if (mic.running) { stopStream(res.stream); return; }
     const started = await mic.start(res.stream, {
       lang,
@@ -1578,7 +1716,7 @@ function setMicIndicator(permissionState) {
       label = 'Microphone blocked by Chrome. Allow it from the address-bar icon.';
     } else if (micBlocked) {
       state = 'error';
-      label = 'Microphone unavailable this session. The meeting transcript is unaffected.';
+      label = el.micHint.textContent;
     } else if (permissionState !== 'granted') {
       state = 'needs-permission';
       label = 'Allow microphone so your own speech is saved';
@@ -1607,12 +1745,16 @@ async function refreshMicPermission() {
   el.micGrant.hidden = !el.includeMic.checked || micGranted;
   setMicIndicator(state);
   if (!el.includeMic.checked) return state;
+  // Permission is not recognition health. Keep a terminal reason until a
+  // deliberate retry or a successful microphone start clears micBlocked.
+  if (micBlocked) return state;
+  showIssue('microphone');
   if (micGranted) {
     setMicHint('Your own speech is added to the downloaded transcript only — '
       + 'never shown live.', false);
   } else if (state === 'denied') {
     setMicHint('Chrome is blocking the microphone for TabScribe. Allow it from the '
-      + 'address-bar icon, then press Start again.', true);
+      + 'address-bar icon, then press Record again.', true);
   } else {
     setMicHint('Your own speech is added to the downloaded transcript only — never '
       + 'shown live. Chrome needs to ask for the microphone once.', false);
@@ -1638,10 +1780,13 @@ async function openMicPermissionPage() {
  * microphone is being transcribed when it no longer is.
  */
 function onMicState(state) {
+  if (state.running) micBlocked = false;
+  else if (state.reason || state.error) {
+    disableMic(state.reason || 'failed', state.error);
+  }
   // Whatever happened, the toolbar indicator must stop claiming the old state.
   refreshMicPermission();
-  if (state.running) return;
-  if (state.error) { disableMic('failed', state.error); return; }
+  if (state.running || micBlocked) return;
   // A clean stop while the option is still on: do not leave the success wording
   // standing, since nothing is being captured any more.
   if (el.includeMic.checked && !el.micHint.classList.contains('denied')
@@ -1659,11 +1804,25 @@ function onMicState(state) {
  * dismissed) should not silently revoke the setting for every future meeting.
  * Only this session stops trying, via micBlocked.
  */
-function disableMic(reason, detail) {
+function onMicUpdate() {
+  const hasText = (transcriber && !transcriber.store.isEmpty()) || mic?.hasText();
+  el.download.disabled = el.clear.disabled = !hasText;
+  refreshUnsavedUi();
+  scheduleAutosave();
+}
+
+function disableMic(reason, error = '') {
   micBlocked = true;
   const message = MIC_MESSAGES[reason] || MIC_MESSAGES.failed;
   setMicHint(`${message} The meeting transcript is unaffected.`, true);
-  if (detail) console.warn('TabScribe microphone:', reason, detail);
+  const remedy = reason === 'no-device'
+    ? 'Connect a microphone, then turn the microphone off and on in Preferences to retry.'
+    : reason === 'device-busy'
+      ? 'Close other apps using the microphone, then turn the microphone off and on in Preferences to retry.'
+      : 'To retry, turn the microphone off and on in Preferences.';
+  showIssue('microphone', `${el.micHint.textContent} ${remedy}`);
+  setMicIndicator(micGranted ? 'granted' : 'unknown');
+  if (error) console.warn('TabScribe microphone:', reason, error);
 }
 
 /** The saved text: meeting only, or meeting merged with the user's own speech. */
@@ -1676,16 +1835,21 @@ function transcriptForSaving() {
   try {
     return mergeTranscripts(transcriber.store, mic.store, { timestamps });
   } catch (e) {
-    // Never lose the meeting transcript to a merge bug.
-    return transcriber.getText({ timestamps });
+    // The output boundary must disclose any fallback; never claim mic inclusion.
+    throw new Error(`Microphone text could not be included: ${e?.message || e}. Both transcripts are kept`);
   }
 }
 
-async function writeClipboard(text) {
+// Manual and automatic copy share ownership of fallback writes and feedback.
+let clipboardRequestId = 0;
+
+async function writeClipboard(text, requestId) {
   try {
     await navigator.clipboard.writeText(text);
     return true;
   } catch (e) {
+    // A delayed rejection must not replace a newer successful clipboard write.
+    if (requestId !== clipboardRequestId) return false;
     // The Clipboard API refuses to write from an unfocused document; fall back to
     // a scratch textarea, which does not disturb the transcript selection because
     // the previous selection is restored afterwards.
@@ -1731,14 +1895,17 @@ async function copy() {
   const whole = transcriber ? transcriber.getText({ timestamps: el.timestamps.checked }) : '';
   const text = selected || whole;
 
-  if (!text) { setStatus('Nothing to copy yet.'); return; }
+  if (!text) { confirmAction('Nothing to copy', 'Nothing to copy yet.', el.copy); return; }
 
-  const ok = await writeClipboard(text);
+  const requestId = ++clipboardRequestId;
+  const ok = await writeClipboard(text, requestId);
+  if (requestId !== clipboardRequestId) return;
   if (!ok) {
-    setStatus('Copy failed — press Ctrl+C with the text selected.', true);
+    showIssue('copy', 'Copy failed — press Ctrl+C with the text selected.');
     return;
   }
 
+  showIssue('copy');
   const words = text.split(/\s+/).filter(Boolean).length;
   confirmAction('Copied', selected
     ? `Copied the selected passage (${words} words).`
@@ -1751,10 +1918,10 @@ async function copy() {
  * There is deliberately no beforeunload handler.
  *
  * An earlier version showed Chrome's "You have unsaved progress" dialog. It was
- * removed once the transcript became persistent: the prompt warned about a loss
- * that can no longer happen, and a dialog that fires when nothing is at stake
- * teaches people to dismiss dialogs. Closing the panel or the window now carries
- * the transcript forward instead of asking about it.
+ * removed at the user's request after session recovery was added. Autosave is
+ * not a durable backup: writes can fail and Chrome can terminate before the
+ * final write. Those failures are reported, and important text needs a verified
+ * download before the browser or extension is restarted.
  *
  * It also never fired in the side panel — Chrome destroys that document without
  * running the prompt — so keeping it would have meant a warning that appeared in
@@ -1764,8 +1931,17 @@ async function copy() {
 function download() {
   // Download is the one place the microphone appears: the live view and Copy
   // stay exactly as they were.
-  const text = transcriptForSaving();
-  if (!text) { setStatus('Nothing to download yet.'); return false; }
+  let text, microphoneWarning = '';
+  try { text = transcriptForSaving(); } catch (e) {
+    // The optional channel must not block export of the core meeting.
+    text = transcriber?.getText({ timestamps: el.timestamps.checked }) || '';
+    if (!text) {
+      showIssue('download', `Could not prepare the transcript: ${e?.message || e}. Keep this view open and retry.`);
+      return false;
+    }
+    microphoneWarning = `This download contains meeting audio only. ${e?.message || e}. Keep this view open to recover the microphone text.`;
+  }
+  if (!text) { confirmAction('Nothing to download', 'Nothing to download yet.', el.download); return false; }
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const name = `transcript-${stamp}.txt`;
   let url = null;
@@ -1779,19 +1955,18 @@ function download() {
     a.click();
   } catch (e) {
     if (url) { try { URL.revokeObjectURL(url); } catch (e2) { /* nothing to revoke */ } }
-    setStatus(`Could not save the transcript: ${e && e.message ? e.message : e}. `
-      + 'Use Copy and paste it somewhere safe.', true);
+    showIssue('download', `Could not save the transcript: ${e && e.message ? e.message : e}. `
+      + 'Use Copy and paste it somewhere safe.');
     return false;
   }
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-  // Remember exactly what reached the disk, so the close warning can tell the
-  // difference between "saved" and "saved, then the meeting continued".
-  savedText = text;
+  setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e) { /* already released */ } }, 5000);
+  showIssue('download');
+  showIssue('microphone-export', microphoneWarning);
+  // An anchor starts a request; it cannot observe cancellation or disk completion.
+  // Without downloads permission, never mark this text saved on that evidence.
   refreshUnsavedUi();
-  const withMic = el.includeMic.checked && mic?.hasText();
-  confirmAction('Downloaded', withMic
-    ? `Downloaded ${name}, including your microphone.`
-    : `Downloaded ${name}`, el.download);
+  const withMic = !microphoneWarning && el.includeMic.checked && mic?.hasText();
+  confirmAction('Download requested', `Download requested: ${name}${microphoneWarning ? ', meeting-only; microphone text could not be included' : withMic ? ', including your microphone' : ''}. Check Chrome’s downloads before deleting; the transcript is kept.`, el.download);
   return true;
 }
 
@@ -1801,7 +1976,11 @@ let clearedSnapshot = null;
 
 function undoClear() {
   if (!clearedSnapshot || !transcriber) return;
-  transcriber.store.prepend(clearedSnapshot);
+  transcriber.store.prepend(clearedSnapshot.snapshot);
+  if (clearedSnapshot.micText) {
+    if (!mic) mic = new MicTranscriber({ onStateChange: onMicState, onUpdate: onMicUpdate });
+    mic.store.prepend(clearedSnapshot.micText);
+  }
   clearedSnapshot = null;
   el.undoBar.hidden = true;
   // Rebuild only for the explicit recovery action, never for live updates.
@@ -1834,6 +2013,7 @@ function clear() {
 }
 
 function openDeleteConfirm() {
+  document.getElementById('confirmText').textContent = 'This transcript may not be saved. Delete it?';
   el.confirmBar.hidden = false;
   el.clear.setAttribute('aria-expanded', 'true');
   // Focus the safe choice: a keyboard Enter on an open question must not delete.
@@ -1847,12 +2027,9 @@ function closeDeleteConfirm({ refocus = true } = {}) {
 }
 
 function downloadThenClear() {
-  // Only delete once the file is genuinely on its way: download() reports
-  // failure, and a failed save must never take the transcript with it. The
-  // question stays open in that case, with its own error already on screen.
   if (!download()) return;
-  closeDeleteConfirm({ refocus: false });
-  performClear();
+  document.getElementById('confirmText').textContent = 'Check that the download finished. Delete this transcript only after your file is saved.';
+  el.confirmCancel.focus({ preventScroll: true });
 }
 
 function performClear() {
@@ -1864,13 +2041,19 @@ function performClear() {
   // user expressed, and persisting it would also reach into the other open view.
   if (!el.prefsPanel.hidden) setPrefsOpen(false, { save: false });
   el.transcript.focus({preventScroll: true});
-  if (transcriber && !transcriber.store.isEmpty()) {
-    clearedSnapshot = transcriber.store.serialize();
+  if ((transcriber && !transcriber.store.isEmpty()) || mic?.hasText()) {
+    // Both stores retain their elapsed offsets; prepend preserves new speech
+    // and the shared capture clock when recognition continues after Delete.
+    clearedSnapshot = {
+      snapshot: transcriber?.store.serialize() || new TranscriptStore().serialize(),
+      micText: mic?.hasText() ? mic.store.serialize() : null,
+    };
     el.undoBar.hidden = false;
   }
   // Drop the DOM rows and their cached identities first, so nothing from the old
   // transcript can be reused when rendering resumes.
   nodes.clear();
+  screenHidden.clear();
   heldUpdates = false;
   el.transcript.replaceChildren(el.empty);
   following = true;
@@ -1886,8 +2069,7 @@ function performClear() {
   }
   // Clear means clear: microphone text is part of what a later Download would
   // write, so leaving it behind would resurrect speech the user just discarded.
-  // Undo intentionally does not restore it — recovering hidden text into a file
-  // the user cannot see on screen would be worse than losing it.
+  // The Undo snapshot above includes it even when the export option is off.
   mic?.clear();
 
   // A pending selection inside the removed text is meaningless now.
@@ -1896,9 +2078,7 @@ function performClear() {
   el.transcript.classList.remove('holding');
   refreshSelectionUi();
 
-  setStatus(transcriber?.running
-    ? 'Cleared. Still listening.'
-    : 'Cleared.');
+  confirmAction('Transcript deleted', 'Transcript deleted. Undo is available for the meeting and microphone text.', el.clear);
 }
 
 // The ONLY caller with a live user activation, and so the only one that may ask
@@ -2027,10 +2207,17 @@ el.localOnly.addEventListener('change', () => {
  * connection is not a surprise mid-session. This only reads state; it never starts
  * a download on its own.
  */
+let modelPreviewVersion = 0;
 async function previewModelState() {
+  const version = ++modelPreviewVersion;
   if (!el.localOnly.checked) { hideModelPanel(); return; }
   const lang = el.lang.value;
-  const availability = await Transcriber.availability(lang, true);
+  let availability;
+  try { availability = await Transcriber.availability(lang, true); } catch (e) {
+    if (version === modelPreviewVersion) onModelProgress({ phase: 'failed', error: `Could not check the speech model: ${e?.message || e}` });
+    return;
+  }
+  if (version !== modelPreviewVersion || el.record.getAttribute('aria-pressed') === 'true') return;
   if (availability === 'available') { hideModelPanel(); return; }
 
   if (availability === 'downloading') {
@@ -2041,7 +2228,7 @@ async function previewModelState() {
     showModelPanel({
       title: 'First run needs a one-time download',
       body: `Transcribing ${langName(lang)} on-device needs Chrome's speech model — ` +
-            'roughly 300&nbsp;MB, downloaded once. Press <strong>Start</strong> and it ' +
+            'roughly 300 MB, downloaded once. Press Record and it ' +
             'will download automatically; on a slow connection expect several minutes.',
       state: 'Not downloaded yet',
       phase: 'idle',
@@ -2065,6 +2252,12 @@ async function init() {
   // Preferences first, before anything reads a control. Applying them later
   // makes the UI visibly flip, and worse, the model check and capture arming
   // below would run against defaults rather than the user's chosen values.
+  prefs.onError(({ operation, error }) => {
+    showIssue(`prefs-${operation}`, error ? operation === 'load'
+      ? `Saved preferences could not be loaded: ${error}. Defaults are in use with the microphone kept off for safety; check Preferences before recording.`
+      : `Preferences could not be saved: ${error}. This view uses your choices, but they may reset when reopened. Change a preference to retry.`
+      : '');
+  });
   applyPrefs(await prefs.load());
   // The view-switch control names the view it goes TO, not the one it is in.
   // Both states route through the same mapping: setting only the window case
@@ -2108,6 +2301,12 @@ async function init() {
   // lost meeting.
   if (handoffWait) setStatus('Bringing the transcript back…');
   let handoff = await claimHandoff({ waitMs: handoffWait });
+  if (handoff.failed) {
+    // Read-only recovery is safe even when ownership could not be confirmed.
+    // Keep a validated handoff instead of replacing it with an older autosave.
+    if (!handoff.restored) await restoreAutosave();
+    return;
+  }
   if (handoffWait || handoff.received) {
     switchLog('init claim', {waited: handoffWait, ...handoff});
   }
@@ -2175,6 +2374,11 @@ async function init() {
 // regardless of how it ended is said here, after it: a worker from an older
 // build than this document. Every later feature quietly misbehaves against
 // one, and the user cannot tell that from any other bug.
-init().finally(() => {
+init().catch((error) => {
+  setRecording(false);
+  el.record.disabled = false;
+  setState('error');
+  showIssue('startup', `TabScribe could not finish opening: ${error?.message || error}. Copy or Download any text before reopening TabScribe.`);
+}).finally(() => {
   if (workerStale) setStatus(STALE_WORKER_MESSAGE, true);
 });

@@ -131,11 +131,9 @@ def main():
                    and 'window' in (in_panel['name'] or '').lower(),
                    json.dumps(in_panel))
 
-        # Put real text in, so the switch has something to carry. Seed through
-        # the hand-off path, which is real product code. The panel does not claim
-        # that snapshot itself — the window-mode document does, on load — so this
-        # asserts the snapshot was written, and the window checks below prove it
-        # actually arrived.
+        # Seed through the real recovery path, then let the source panel claim
+        # and acknowledge it before switching. Leaving an unrelated transfer
+        # pending must correctly block a new transfer, not overwrite its data.
         seeded = chrome.evaluate(psid, """(async () => {
           await chrome.storage.session.set({handoffSnapshot: {
             snapshot: {epoch: 0, segments: [
@@ -150,16 +148,26 @@ def main():
         checks.add('a transcript is staged for the switch to carry',
                    seeded.get('ok') and seeded.get('segs') == 1, json.dumps(seeded))
 
+        chrome.send('Page.reload', session_id=psid)
+        try:
+            chrome.wait_for_js(psid, "document.querySelectorAll('.seg').length === 1 && document.getElementById('status').textContent.length > 0", timeout=20)
+        except RuntimeError:
+            print('Restore diagnostics:', chrome.evaluate(psid, "({status:document.getElementById('status').textContent,issues:document.getElementById('issues').innerText,rows:document.querySelectorAll('.seg').length})"), flush=True)
+            raise
+
         # --- panel -> window --------------------------------------------------
         real_click(chrome, psid, 'popoutBtn')
-        time.sleep(3)
-        win = find_target(chrome, 'sidepanel.html?view=window')
+        deadline = time.monotonic() + 20
+        win = None
+        while time.monotonic() < deadline and win is None:
+            win = find_target(chrome, 'sidepanel.html?view=window')
+            if win is None:
+                time.sleep(.1)
         checks.add('pressing Window opens the pop-out', bool(win))
         if not win:
             return checks.finish()
         wsid = chrome.attach(win['targetId'])
-        chrome.wait_for_js(wsid, "!!document.getElementById('recordBtn')", timeout=30)
-        time.sleep(1.0)
+        chrome.wait_for_js(wsid, "document.querySelectorAll('.seg').length === 1 && !document.getElementById('popoutBtn').disabled", timeout=30)
 
         # In window mode the same control must offer the way back.
         in_window = chrome.evaluate(wsid, """(() => {
@@ -186,7 +194,9 @@ def main():
 
         # --- window -> panel --------------------------------------------------
         real_click(chrome, wsid, 'popoutBtn')
-        time.sleep(4)
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and find_target(chrome, 'sidepanel.html?view=window') is not None:
+            time.sleep(.1)
 
         back = find_target(chrome, 'sidepanel.html', exclude='view=window')
         checks.add('pressing Sidebar opens the side panel again', bool(back))

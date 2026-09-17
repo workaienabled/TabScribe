@@ -64,21 +64,13 @@ microphone status, pop-out, and the gear. Measured at 280–640px in
   narrow panels by shrinking the buttons to 26px, which `ux_test.py` caught: the
   project's floor is 28px, and the gaps give up space instead.
 
-## The unsaved-work warning
+## No browser close prompt
 
-Chrome's own "You have unsaved progress" dialog, from `beforeunload`. Measured
-before it was designed (`probe/spike_unload.py`, `probe/spike_panel_unload.py`,
-Chrome 151): it produces a real blocking dialog in the **side panel**, in the
-pop-out window, and in an extension page in a tab — the panel was the uncertain
-one, and it works. Chrome ignores any custom string, so there is no message to
-write.
-
-It is armed by comparing the transcript against the exact text last written to
-disk, not by a dirty flag. A flag would go stale after Undo, after a hand-off, or
-after the microphone merged text in, and would then either nag about nothing or
-stay silent over a lost meeting. Downloading disarms it; speech after the
-download re-arms it. A footer dot shows the same state, and the gear can turn the
-warning off.
+The native `beforeunload` prompt is intentionally removed from both views.
+Session autosave helps recover after a panel close, but does not survive a full
+browser exit or extension reload. A download request is not a confirmed disk
+write; Download stays marked unsaved until a verified-saving mechanism exists.
+Users should check their file before deleting or quitting Chrome.
 
 ## The microphone indicator
 
@@ -88,29 +80,14 @@ together, so the meaning never rests on colour alone. Only `needs-permission` is
 actionable — pressing it opens `mic-permission.html`, the one surface that can
 raise Chrome's prompt. The others are status, and are disabled.
 
-## The unsaved-work warning, and why it is not the safety net
+## Autosave is a recovery aid
 
-Chrome's own "You have unsaved progress" dialog, from `beforeunload`. It fires in
-the **pop-out window**. It does **not** fire when the side panel is dismissed, or
-when the browser is closed with the panel open.
-
-An earlier version of this document claimed it worked in the side panel too. That
-was wrong, and the way it was wrong is worth recording: the spike measured
-`beforeunload` on **navigation** — `Page.navigate` blocked by a dialog — and that
-result was generalised to dismissal, which is a different event. The same spike
-also reported `panel_closed_without_dialog: true` and that was dismissed as a CDP
-artifact. It was the real signal. Real-world use settled it.
-
-So the warning is kept for the window, where it genuinely works, but it is not
-what protects the transcript. **The transcript is persisted continuously** into
-`chrome.storage.session` and restored when the panel next opens: closing the
-panel cannot lose a meeting whether or not Chrome ever shows a prompt.
-`storage.session` is deliberate — it survives a panel close and a reopen, and is
-discarded when the browser exits, so a transcript is never written to disk
-behind the user's back.
-
-`probe/bare_shell_test.py` asserts the restore against a genuinely destroyed
-document rather than trusting the write.
+An earlier spike measured `beforeunload` on navigation and incorrectly generalized
+that result to dismissal. The extension no longer relies on that prompt at all.
+Session autosave restores a previous transcript after a panel closes; failures
+are now visible and an unreadable recovery copy is not silently overwritten.
+The last coalesced update can still be lost on abrupt process termination.
+See [the error-handling contract](error-handling.md).
 
 ## The bare shell
 
@@ -367,25 +344,16 @@ document that did each. The next report of this bug can carry the sequence
 rather than the symptom. (It was briefly shown under the gear; see below for why
 it no longer is.)
 
-## Delete asks only when the loss would be real
+## Delete never treats a request as a saved file
 
-Delete is backed by Undo, so a confirmation on every press would be friction with
-nothing behind it. But Undo is held in this document's memory and dies with it —
-so deleting a transcript that never reached disk is the one case where the work
-is genuinely unrecoverable. That case, and only that case, asks.
+The original “Download and delete” design incorrectly treated an anchor click
+as a completed write. A cancelled or failed browser download could therefore
+lose the transcript. With unchanged permissions, completion is unobservable.
 
-The gate is the file, not the click: the same `hasUnsavedTranscript()` the
-Download control's highlight uses, comparing the current transcript against
-exactly what last reached disk. Download it and Delete is immediate again; say
-one more sentence after that download and it asks again, because the file is
-stale the moment the meeting continues.
-
-The question offers **Download and delete** first, because saving is almost
-always what the user actually wanted, and the delete only happens if the write
-succeeded — `download()` now reports success rather than returning `undefined`,
-so a failed save cannot take the transcript with it. Cancel and Escape both back
-out without destroying anything, and focus lands on Cancel so a stray Enter is
-never the destructive answer.
+The confirmation now offers **Download first**, **Delete**, and **Cancel**.
+Download first retains the text and asks the user to check Chrome’s downloads.
+Only explicit Delete removes it. Cancel and Escape preserve the transcript,
+and initial focus remains on Cancel. Undo still backs an explicit deletion.
 
 ## The switch log is gone from the panel
 
@@ -400,45 +368,21 @@ chrome.storage.session.get('switchLog')
 
 from the panel's devtools console.
 
-## A fatal error must survive the stop that follows it
+## Error evidence and Chrome compatibility
 
-Reported from a real Chrome 150: the panel "wrote Stopped right after start".
-The version was a red herring — on-device speech has shipped since Chrome 139 —
-and the actual defect was an ordering contract inside the extension.
+The historical Chrome 150 failure has no captured error code or model state,
+so its cause is unknown. The audit reproduced a distinct message-loss bug:
+`onerror` followed by `onend` could overwrite the cause, including before the
+recognizer ever fired `onstart`. Terminal status now carries the code and detail.
+The UI names the failed attempt’s language and local/cloud mode, offers a remedy,
+and does not infer “model missing” from `language-not-supported` alone.
 
-`SpeechRecognition` fires `onerror` and then `onend` microseconds later. The
-panel's `onerror` set a useful message; its `onend` handler then overwrote it
-with a bare `"Stopped."` before anyone could read it. Every distinct failure
-arrived as the same blank word: no language pack installed, microphone blocked,
-recognition service refusing — indistinguishable.
+The manifest’s 139 floor is based on the listed API introduction versions, not
+an end-to-end run on Chrome 139. Current browser verification runs on Chrome
+151.0.7922.137. The static compatibility test checks the modeled API table; it
+does not establish behavior on every distribution or historical browser build.
 
-The reason now travels **with** the stop. `onStatus('stopped', {fatal, error})`
-carries the code, and the panel translates it into something actionable rather
-than echoing Chrome's vocabulary at the user:
-
-> The on-device en-US model is not installed in this Chrome. Press Record again
-> to download it, or uncheck "On-device only" to use the cloud service.
-
-`probe/fatal-status.test.mjs` drives the real `Transcriber` with a fake
-recognizer and asserts the callback sequence — error first, stop second, reason
-preserved — plus the two cases that must *not* look like failures: a deliberate
-Stop, and an audio track that simply ended.
-
-## The declared Chrome floor is checked, not guessed
-
-`minimum_chrome_version` was `"150"`, a number nobody had verified. It was wrong
-in the direction that hurts: it refuses installation on browsers that run the
-extension perfectly well, and it invites exactly the misdiagnosis above — when
-something breaks on 150, a floor of 150 makes the version look guilty.
-
-The real floor is **139**, set by on-device `SpeechRecognition.available()`.
-`chrome.sidePanel.close()` needs 141, but it is called inside a `try`/`catch`
-with a working fallback (the survivor path), so it does not raise the floor.
-
-`probe/min-chrome-version.test.mjs` pins this against the source: it fails if the
-manifest is below what an API requires, *and* if it is above what anything
-actually needs. Optional APIs must be proven guarded. Verified in both
-directions by setting the manifest to 120 and 150 and watching it fail.
+See [error handling and verification](error-handling.md) for the current contract.
 
 ## Deliberate limits
 

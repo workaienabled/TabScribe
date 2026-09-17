@@ -1,27 +1,10 @@
-"""Delete asks before destroying work that is not on disk — and only then.
+"""Delete protects text until the user explicitly accepts the loss.
 
-Delete is backed by Undo, so a confirmation could be pure friction. It is not,
-for one reason: Undo lives in this document's memory and dies with it, so a
-Delete on a transcript that was never downloaded is the one case where the loss
-is unrecoverable. That is exactly the case the user named.
-
-So the gate is the file, not the click: confirm when the transcript differs from
-what last reached disk, stay silent when it does not. A confirmation that fires
-when nothing is at stake is how people learn to click through confirmations.
-
-And because the real remedy is almost always "save it first", the confirmation
-offers that as an action rather than only a warning.
-
-What is asserted:
-
-  * unsaved  -> Delete asks, and the transcript is still there while it asks
-  * Cancel   -> nothing was destroyed
-  * confirm  -> the transcript goes, and Undo still backs it
-  * saved    -> Delete is immediate, with no question
-  * new speech after a download makes it unsaved again, so it asks again
-  * "Download and delete" writes the real file AND clears, in one action
-
-Run with DISPLAY pointing at a private Xvfb.
+A download request is not a completed disk write. With unchanged extension
+permissions, TabScribe cannot see completion or cancellation, so Download first
+keeps the transcript and the final Delete remains an explicit user decision.
+Real downloaded content is verified here; denied downloads have a separate
+regression in output_errors_test.py. Run only on a private Xvfb.
 """
 import sys
 import tempfile
@@ -100,7 +83,7 @@ def confirming_deletes_and_undo_still_works(ui):
     ui.check('Undo brings it back', back['segs'] == 4, back)
 
 
-def downloaded_work_is_deleted_without_a_question(ui, download_dir):
+def requested_download_still_requires_confirmation(ui, download_dir):
     written = ui.download_and_read(download_dir)
     ui.check('the transcript really reached disk',
              'Segment 1.' in written and len(written) > 80,
@@ -109,10 +92,10 @@ def downloaded_work_is_deleted_without_a_question(ui, download_dir):
     ui.js("document.getElementById('clearBtn').click()")
     time.sleep(.3)
     quiet = confirm_state(ui)
-    ui.check('a downloaded transcript is deleted without a question',
-             quiet['shown'] is False and quiet['segs'] == 0, quiet)
-    ui.check('and Undo still backs that too', quiet['undoShown'] is True, quiet)
-    ui.js("document.getElementById('undoClearBtn').click()")
+    ui.check('the extension does not mistake its download request for verified saving',
+             quiet['shown'] is True and quiet['segs'] == 4, quiet)
+    ui.check('the transcript is still intact, so Undo is not needed', quiet['undoShown'] is False, quiet)
+    ui.js("document.getElementById('confirmCancelBtn').click()")
     time.sleep(.3)
 
 
@@ -137,7 +120,7 @@ def new_speech_after_saving_asks_again(ui):
     time.sleep(.15)
 
 
-def download_and_delete_does_both(ui, download_dir):
+def download_first_preserves_until_explicit_delete(ui, download_dir):
     """The remedy the question offers must actually be a remedy."""
     ui.js("document.getElementById('clearBtn').click()")
     time.sleep(.15)
@@ -145,15 +128,17 @@ def download_and_delete_does_both(ui, download_dir):
     ui.check('the question offers saving as the way out', shown['shown'] is True, shown)
 
     written = ui.download_and_read(download_dir, trigger='confirmSaveBtn')
-    ui.check('Download and delete writes the whole transcript, including the new line',
+    ui.check('Download first writes the whole transcript, including the new line',
              'Segment 1.' in written and 'Something said after the download.' in written,
              written[-90:])
     time.sleep(.4)
     after = confirm_state(ui)
-    ui.check('and then deletes it, which is what the user asked for',
-             after['segs'] == 0, after)
-    ui.check('the question closes', after['shown'] is False, after)
-    ui.check('and Undo backs it', after['undoShown'] is True, after)
+    ui.check('requesting the file does not erase the source transcript',
+             after['segs'] == 5, after)
+    ui.check('the question stays open for explicit deletion', after['shown'] is True, after)
+    ui.js("document.getElementById('confirmDeleteBtn').click()")
+    after = confirm_state(ui)
+    ui.check('explicit Delete is still backed by Undo', after['segs'] == 0 and after['undoShown'] is True, after)
 
 
 def the_question_does_not_cover_other_status(ui):
@@ -217,9 +202,9 @@ if __name__ == '__main__':
             asks_when_the_work_is_not_on_disk(ui)
             cancel_destroys_nothing(ui)
             confirming_deletes_and_undo_still_works(ui)
-            downloaded_work_is_deleted_without_a_question(ui, downloads)
+            requested_download_still_requires_confirmation(ui, downloads)
             new_speech_after_saving_asks_again(ui)
-            download_and_delete_does_both(ui, downloads)
+            download_first_preserves_until_explicit_delete(ui, downloads)
             the_question_does_not_cover_other_status(ui)
     except Exception:
         ui.cleanup()

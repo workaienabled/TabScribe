@@ -68,21 +68,23 @@ accessible name; none carries its meaning in colour alone.
 - **One control switches between the two views.** In the sidebar it reads
   **Window** and pops out; in the window it reads **Sidebar** and moves back,
   closing the window as it goes. Recording, the microphone, and the transcript
-  all continue across the switch — it is a move, not a restart. If the switch
-  cannot complete, the window stays put with the meeting still recording and
-  says why, rather than closing on a hand-off that did not happen.
+  are handed to the receiving view, which acknowledges the restored transcript
+  before the source closes. Recognition restarts there, so a brief gap is possible.
+  On failure, the source stays open and attempts to resume; if that also fails,
+  it keeps the text and reports the reason.
   Closing the pop-out with the window's own close button does *not* reopen the
   sidebar — Chrome only allows that from a click — so use **Sidebar** to switch
   back, or the toolbar icon to reopen the panel. There is no close prompt in
-  either direction: nothing is lost, so nothing needs confirming. The Download
-  control is highlighted whenever there is something not yet saved.
+  either direction. Autosave is a recovery aid, not a disk backup. The Download
+  control stays highlighted while text has no independently verified saved copy.
 - **Include my microphone in the saved file** (on by default): also transcribes
   your own speech and merges it into the **downloaded file only**. It is never
   shown in the live transcript and never copied by Copy. See below.
 - **Delete transcript** (the red control at the far end of the row, deliberately
-  away from Clear screen): **asks first if the transcript has not been
-  downloaded**, offering **Download and delete** as the way out; deletes straight
-  away once the file is on disk, since Undo still backs it. It removes the text, including the current
+  away from Clear screen): asks before deleting text. **Download first** requests
+  the file and retains the transcript. Check Chrome’s downloads, then choose
+  **Delete** explicitly. TabScribe does not have downloads permission and cannot
+  verify file completion or cancellation. It removes the text, including the current
   utterance, and keeps listening. Preferences close to reveal **Undo**, which
   restores the cleared text before anything received since.
   Only the most recent Clear is recoverable; recovery is held in this view's memory
@@ -151,30 +153,26 @@ happens automatically. The extension UI has no remote fonts, analytics, or scrip
 Transcripts are kept in memory; pop-out handoff temporarily uses session storage.
 Use Download before closing the view. Preferences persist; transcript history does not.
 
-## Chrome version
+## Chrome version and failures
 
-**Chrome 139 or newer.** That floor is set by on-device speech recognition
-(`SpeechRecognition.available()` / `processLocally`), which is what TabScribe
-transcribes with. `probe/min-chrome-version.test.mjs` checks the manifest against
-the APIs actually used, in both directions — it fails if the floor is too low to
-run, and equally if it is higher than necessary and locks out browsers that work.
+The manifest declares **Chrome 139** as the API-level minimum, based on the
+on-device speech APIs. This is not an end-to-end certification of every Chrome
+139+ build or platform. The current Linux regression environment uses Chrome
+151.0.7922.137. On-device recognition also needs a supported language model.
+`sidePanel.close()` is optional (Chrome 141+); failure leaves the old view open.
 
-On **Chrome 139–140** the pop-out window works, but the side panel does not close
-itself when you pop out: `chrome.sidePanel.close()` arrived in 141. The panel is
-left behind, and pressing **Sidebar** in the window returns to it correctly.
-Everything else is unaffected.
+The reported “Stopped right after start” on Chrome 150 was not diagnosed: both
+Chrome’s version and its running process changed before it worked. A bare
+“Stopped” could hide several different errors. TabScribe now preserves the
+actual recognition code, the failed attempt’s language/mode, and a suggested
+next step. `language-not-supported` alone does **not** prove a missing model.
 
-### "Stopped" right after pressing Record
+If TabScribe reports a panel/background version mismatch, download and verify
+any transcript before reloading the extension at `chrome://extensions` or
+restarting Chrome. Neither action is a substitute for saving important text.
 
-Almost always the on-device language model is not installed yet — Chrome reports
-that as `language-not-supported`, and TabScribe now says so explicitly and offers
-the fix (press Record again to download it, or uncheck **On-device only**).
-Earlier builds printed a bare "Stopped." for every fatal error, which made a
-missing model look identical to a blocked microphone.
-
-If the status line instead says TabScribe was updated but Chrome is running the
-old version, reload the extension at `chrome://extensions` — Chrome sometimes
-keeps the previous background worker alive across a reload.
+See [error handling and verification](docs/error-handling.md) for the audited
+failure boundaries, test coverage, recovery behavior, and remaining limits.
 
 ## Development and verification
 

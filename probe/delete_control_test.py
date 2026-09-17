@@ -96,7 +96,7 @@ def the_two_really_differ(ui, download_dir):
 
     ui.js("document.getElementById('showHiddenBtn').click()")
     time.sleep(0.3)
-    ui.js("document.getElementById('clearBtn').click()")
+    ui.delete_transcript()
     time.sleep(0.5)
     after = ui.js("""({
       segs: document.querySelectorAll('.seg').length,

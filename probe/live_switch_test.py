@@ -85,6 +85,8 @@ def state_of(chrome, sid):
       mic: document.getElementById('micStatusBtn').dataset.state,
       segs: document.querySelectorAll('.seg').length,
       status: document.getElementById('status').textContent,
+      issues: document.getElementById('issues')?.innerText || '',
+      recordDisabled: document.getElementById('recordBtn').disabled,
     })""", await_promise=False)
 
 

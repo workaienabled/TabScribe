@@ -84,7 +84,9 @@ def switch_label(ui):
     # --- hand off for real, then come back through the real reclaim path ----
     ui.js("document.getElementById('popoutBtn').click()")
     ui.chrome.wait_for_js(
-        ui.sid, "document.getElementById('recordBtn').disabled === true", timeout=20)
+        ui.sid, "document.getElementById('recordBtn').disabled === true && "
+        "document.getElementById('status').textContent.includes('Moved') && "
+        "!document.getElementById('popoutBtn').disabled", timeout=20)
     handed = measure(ui)
     ui.check('after handing off, the control points at the open window',
              'window' in handed['text'].lower() and 'window' in handed['name'].lower(), handed)
@@ -101,10 +103,6 @@ def switch_label(ui):
     ui.js("""(() => {
       const realSend = chrome.runtime.sendMessage.bind(chrome.runtime);
       chrome.runtime.sendMessage = (msg, ...rest) => {
-        if (msg && msg.type === 'CLAIM_HANDOFF') {
-          return Promise.resolve({ok: true, resume: false, snapshot: {epoch: 0, segments: [
-            {key: '0:0', text: 'Carried back from the window.', isFinal: true, startedAt: 0}]}});
-        }
         if (msg && msg.type === 'GET_STREAM_ID') {
           return Promise.resolve({ok: true, streamId: 'test', tabId: 1, title: 'Test tab'});
         }
@@ -124,16 +122,28 @@ def switch_label(ui):
         return Promise.resolve(dest.stream);
       };
     })()""")
+    # Do not counterfeit CLAIM/ACK replies: the real worker must reserve,
+    # restore and accept this snapshot. Close the actual popup so focus can
+    # legitimately reclaim the source without competing with a live receiver.
+    ui.js("""(async () => {
+      await chrome.storage.session.set({handoffSnapshot: {
+        snapshot: {epoch:0,segments:[{key:'0:0',text:'Carried back from the window.',isFinal:true,startedAt:0}]},
+        resume:false,micText:null}, switchPending:{at:Date.now(),resume:false}});
+      const {popoutWindowId}=await chrome.storage.session.get('popoutWindowId');
+      if(popoutWindowId !== undefined) await chrome.windows.remove(popoutWindowId);
+    })()""")
     ui.js("window.dispatchEvent(new Event('focus'))")
     # Wait for the reclaim to actually land, rather than guessing at its timing.
     ui.chrome.wait_for_js(
-        ui.sid, "document.getElementById('recordBtn').disabled === false", timeout=25)
+        ui.sid, "document.getElementById('recordBtn').disabled === false && "
+        "document.getElementById('transcript').textContent.includes('Carried back from the window.')", timeout=25)
     reclaimed = ui.js("""({
       segs: document.querySelectorAll('.seg').length,
       recordEnabled: !document.getElementById('recordBtn').disabled,
     })""")
-    ui.check('the panel really did take the tab back',
-             reclaimed['recordEnabled'] and reclaimed['segs'] >= 1, reclaimed)
+    accepted = ui.js("(async()=> (await chrome.storage.session.get('handoffSnapshot')).handoffSnapshot?.state === 'accepted')()")
+    ui.check('the panel really did take the tab back and acknowledge it',
+             reclaimed['recordEnabled'] and reclaimed['segs'] == 1 and accepted, {**reclaimed, 'accepted': accepted})
     back = measure(ui)
     ui.check('coming back to the sidebar restores the same Window label',
              back['text'] == 'Window', back)

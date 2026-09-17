@@ -77,8 +77,8 @@ def robustness(ui):
     click(ui, 'downloadBtn')
     time.sleep(.4)
     failed = ui.js("""({
-      text: document.getElementById('status').textContent,
-      isError: document.getElementById('status').classList.contains('error'),
+      text: document.getElementById('issues').innerText,
+      isError: !document.getElementById('issues').hidden,
     })""")
     ui.check('a failed Download reports the failure instead of doing nothing',
              bool(failed['text'].strip()) and failed['isError'], failed)
@@ -155,7 +155,7 @@ def review(ui):
     ui.check('Clear offers Undo before the hand-off',
              ui.js("!document.getElementById('undoBar').hidden"))
     click(ui, 'popoutBtn')
-    ui.chrome.wait_for_js(ui.sid, "document.getElementById('recordBtn').disabled === true", timeout=15)
+    ui.chrome.wait_for_js(ui.sid, "document.getElementById('status').textContent.includes('Moved to')", timeout=20)
     ui.check('handing the tab over drops the pending Undo',
              ui.js("document.getElementById('undoBar').hidden"))
 

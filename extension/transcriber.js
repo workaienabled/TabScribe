@@ -21,6 +21,26 @@
  *    for as long as it is being captured.
  */
 
+/** Validate a full snapshot before a restore can mutate live transcript state. */
+function validateSnapshot(snapshot) {
+  const invalid = () => { throw new TypeError('Invalid transcript snapshot.'); };
+  if (!snapshot || !Array.isArray(snapshot.segments) ||
+      !Number.isSafeInteger(snapshot.epoch) || snapshot.epoch < 0) invalid();
+  let epoch = snapshot.epoch;
+  const keys = new Set();
+  const segments = snapshot.segments.map(s => {
+    if (!s || typeof s.key !== 'string' || !s.key || keys.has(s.key) ||
+        typeof s.text !== 'string' || typeof s.isFinal !== 'boolean' ||
+        !Number.isFinite(s.startedAt) || s.startedAt < 0) invalid();
+    keys.add(s.key);
+    const recognitionKey = /^(\d+):\d+$/.exec(s.key);
+    if (recognitionKey) epoch = Math.max(epoch, Number(recognitionKey[1]));
+    return { key: s.key, text: s.text, isFinal: true, startedAt: s.startedAt };
+  });
+  if (!Number.isSafeInteger(epoch) || epoch >= Number.MAX_SAFE_INTEGER - 1) invalid();
+  return { epoch, segments };
+}
+
 /** Ordered transcript segments, addressed by (epoch, result index). */
 export class TranscriptStore {
   constructor() {
@@ -91,35 +111,29 @@ export class TranscriptStore {
    * with a restored key.
    */
   restore(snapshot) {
-    if (!snapshot || !Array.isArray(snapshot.segments)) return;
-    this.clear();
-    for (const s of snapshot.segments) {
-      if (!s || !s.text || !s.text.trim()) continue;
-      const seg = {
-        key: s.key,
-        text: s.text,
-        isFinal: true,
-        startedAt: s.startedAt || 0,
-      };
-      this.byKey.set(seg.key, seg);
-      this.segments.push(seg);
-    }
-    this.epoch = (Number(snapshot.epoch) || 0) + 1;
+    const validated = validateSnapshot(snapshot);
+    const segments = validated.segments.filter(s => s.text.trim());
+    const byKey = new Map(segments.map(s => [s.key, s]));
+    this.segments = segments;
+    this.byKey = byKey;
+    this.epoch = validated.epoch + 1;
   }
 
   /** Recover cleared history without changing current recognition keys or epoch. */
   prepend(snapshot) {
-    if (!snapshot || !Array.isArray(snapshot.segments)) return;
+    const validated = validateSnapshot(snapshot);
     const recovered = [];
-    for (const [index, source] of snapshot.segments.entries()) {
-      if (!source?.text?.trim()) continue;
+    const byKey = new Map(this.byKey);
+    for (const [index, source] of validated.segments.entries()) {
+      if (!source.text.trim()) continue;
       let key = `recovered:${index}`;
-      while (this.byKey.has(key)) key = `_${key}`;
-      const segment = { ...source, key, isFinal: true };
+      while (byKey.has(key)) key = `_${key}`;
+      const segment = { ...source, key };
       recovered.push(segment);
-      this.byKey.set(key, segment);
+      byKey.set(key, segment);
     }
     this.segments = [...recovered, ...this.segments];
+    this.byKey = byKey;
   }
 
   /** Plain text, one line per segment when timestamps are on, otherwise flowed. */
@@ -158,60 +172,72 @@ export function getSpeechRecognition() {
  */
 export function buildAudioGraph(stream, { monitor = true, preroll = true } = {}) {
   const ctx = new AudioContext();
-  const source = ctx.createMediaStreamSource(stream);
-  const dest = ctx.createMediaStreamDestination();
+  let dest;
+  try {
+    const source = ctx.createMediaStreamSource(stream);
+    dest = ctx.createMediaStreamDestination();
 
-  source.connect(dest);
+    source.connect(dest);
 
-  // Play the tab's audio back to the user. Without this the tab is silent for as
-  // long as tabCapture holds the stream.
-  let monitorGain = null;
-  if (monitor) {
-    monitorGain = ctx.createGain();
-    monitorGain.gain.value = 1.0;
-    source.connect(monitorGain);
-    monitorGain.connect(ctx.destination);
-  }
-
-  // Keep the graph pulling even when the tab produces nothing, so the destination
-  // node keeps emitting frames and the recognizer can flush pending segments.
-  const keepAlive = ctx.createConstantSource();
-  keepAlive.offset.value = 0;
-  const keepAliveGain = ctx.createGain();
-  keepAliveGain.gain.value = 0;
-  keepAlive.connect(keepAliveGain);
-  keepAliveGain.connect(dest);
-  keepAlive.start();
-
-  // The recognizer needs a moment of audio before it locks on, which otherwise eats
-  // the first word of the first sentence. A brief burst of very quiet noise at
-  // startup gives it something to settle on without being audible to the user (it is
-  // routed only to the recognition destination, never to the speakers).
-  if (preroll) {
-    const frames = Math.floor(ctx.sampleRate * 0.3);
-    const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < frames; i += 1) {
-      data[i] = (Math.random() * 2 - 1) * 0.0008;
+    // Play the tab's audio back to the user. Without this the tab is silent for as
+    // long as tabCapture holds the stream.
+    let monitorGain = null;
+    if (monitor) {
+      monitorGain = ctx.createGain();
+      monitorGain.gain.value = 1.0;
+      source.connect(monitorGain);
+      monitorGain.connect(ctx.destination);
     }
-    const prerollSource = ctx.createBufferSource();
-    prerollSource.buffer = buffer;
-    prerollSource.connect(dest);
-    prerollSource.start();
-  }
 
-  const track = dest.stream.getAudioTracks()[0];
+    // Keep the graph pulling even when the tab produces nothing, so the destination
+    // node keeps emitting frames and the recognizer can flush pending segments.
+    const keepAlive = ctx.createConstantSource();
+    keepAlive.offset.value = 0;
+    const keepAliveGain = ctx.createGain();
+    keepAliveGain.gain.value = 0;
+    keepAlive.connect(keepAliveGain);
+    keepAliveGain.connect(dest);
+    keepAlive.start();
 
-  const cleanup = async () => {
-    try { keepAlive.stop(); } catch (e) { /* already stopped */ }
-    try { source.disconnect(); } catch (e) { /* already disconnected */ }
-    if (monitorGain) {
-      try { monitorGain.disconnect(); } catch (e) { /* already disconnected */ }
+    // The recognizer needs a moment of audio before it locks on, which otherwise eats
+    // the first word of the first sentence. A brief burst of very quiet noise at
+    // startup gives it something to settle on without being audible to the user (it is
+    // routed only to the recognition destination, never to the speakers).
+    if (preroll) {
+      const frames = Math.floor(ctx.sampleRate * 0.3);
+      const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < frames; i += 1) {
+        data[i] = (Math.random() * 2 - 1) * 0.0008;
+      }
+      const prerollSource = ctx.createBufferSource();
+      prerollSource.buffer = buffer;
+      prerollSource.connect(dest);
+      prerollSource.start();
     }
-    try { await ctx.close(); } catch (e) { /* already closed */ }
-  };
 
-  return { track, ctx, cleanup, setMonitorVolume: (v) => { if (monitorGain) monitorGain.gain.value = v; } };
+    const track = dest.stream.getAudioTracks()[0];
+
+    const cleanup = async () => {
+      for (const output of dest.stream.getTracks()) {
+        try { output.stop(); } catch (e) { /* continue closing the graph */ }
+      }
+      try { keepAlive.stop(); } catch (e) { /* already stopped */ }
+      try { source.disconnect(); } catch (e) { /* already disconnected */ }
+      if (monitorGain) {
+        try { monitorGain.disconnect(); } catch (e) { /* already disconnected */ }
+      }
+      try { await ctx.close(); } catch (e) { /* already closed */ }
+    };
+
+    return { track, ctx, cleanup, setMonitorVolume: (v) => { if (monitorGain) monitorGain.gain.value = v; } };
+  } catch (error) {
+    for (const output of dest?.stream.getTracks() || []) {
+      try { output.stop(); } catch (e) { /* best effort */ }
+    }
+    try { Promise.resolve(ctx.close()).catch(() => {}); } catch (e) { /* preserve original error */ }
+    throw error;
+  }
 }
 
 /**
@@ -230,18 +256,18 @@ export class Transcriber {
     this.stopping = false;
     this.t0 = 0;
     this.restarts = 0;
+    this.failedRestarts = 0;
+    this.retryTimer = null;
+    this.startTimer = null;
     this.lastError = null;
+    this.lastErrorMessage = '';
     this.options = { lang: 'en-US', processLocally: true };
   }
 
   static async availability(lang = 'en-US', processLocally = true) {
     const SR = getSpeechRecognition();
     if (!SR || !SR.available) return 'unsupported';
-    try {
-      return await SR.available({ langs: [lang], processLocally });
-    } catch (e) {
-      return 'unsupported';
-    }
+    return SR.available({ langs: [lang], processLocally });
   }
 
   static async install(lang = 'en-US') {
@@ -263,64 +289,80 @@ export class Transcriber {
    * Anything resembling a percentage would be fabricated, so none is produced.
    */
   static async ensureModel(lang = 'en-US', { allowCloudFallback = false, onStatus = () => {},
-                                             onProgress = () => {} } = {}) {
-    let availability = await Transcriber.availability(lang, true);
-    onProgress({ phase: 'checking', availability });
-
-    if (availability === 'unsupported') {
-      onProgress({ phase: 'unsupported', availability });
-      return { ok: false, availability, installed: false, fellBackToCloud: false };
-    }
-    if (availability === 'available') {
-      onProgress({ phase: 'ready', availability });
-      return { ok: true, availability, installed: false, fellBackToCloud: false };
-    }
-    if (availability === 'downloadable' || availability === 'downloading') {
-      onStatus(`Downloading on-device model for ${lang}…`);
-      onProgress({ phase: 'downloading', availability, startedAt: Date.now() });
-
-      // Poll Chrome's own availability during the install so the UI reflects the
-      // browser's real state (including a download already started elsewhere)
-      // rather than assuming what is happening.
-      let polling = true;
-      (async () => {
-        while (polling) {
-          await new Promise((r) => setTimeout(r, 1500));
-          if (!polling) break;
-          const a = await Transcriber.availability(lang, true);
-          if (!polling) break;
-          onProgress({ phase: a === 'available' ? 'ready' : 'downloading', availability: a });
-        }
-      })();
-
-      let installed = false;
-      let failure = null;
-      try {
-        installed = await Transcriber.install(lang);
-      } catch (e) {
-        failure = String(e && e.message ? e.message : e);
-      } finally {
-        polling = false;
+    onProgress = () => {}, signal, timeoutMs = 600000 } = {}) {
+    signal?.throwIfAborted();
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new RangeError('Invalid model timeout.');
+    let timeout;
+    let pollTimer;
+    let abort;
+    const cancelled = new Promise((resolve, reject) => {
+      timeout = setTimeout(() => reject(new DOMException('Speech model setup timed out.', 'TimeoutError')), timeoutMs);
+      abort = () => reject(signal.reason || new DOMException('Cancelled.', 'AbortError'));
+      signal?.addEventListener('abort', abort, { once: true });
+    });
+    const wait = async (promise) => {
+      const result = await Promise.race([promise, cancelled]);
+      signal?.throwIfAborted();
+      return result;
+    };
+    try {
+      let availability = await wait(Transcriber.availability(lang, true));
+      onProgress({ phase: 'checking', availability });
+      if (availability === 'unsupported' || availability === 'available') {
+        const ok = availability === 'available';
+        onProgress({ phase: ok ? 'ready' : 'unsupported', availability });
+        return { ok, availability, installed: false, fellBackToCloud: false };
       }
-
-      availability = await Transcriber.availability(lang, true);
-      const ok = availability === 'available';
-      onProgress({ phase: ok ? 'ready' : 'failed', availability, installed, error: failure });
-      return { ok, availability, installed, fellBackToCloud: false, error: failure };
+      if (availability === 'downloadable' || availability === 'downloading') {
+        onStatus(`Downloading on-device model for ${lang}…`);
+        onProgress({ phase: 'downloading', availability, startedAt: Date.now() });
+        signal?.throwIfAborted();
+        // Chrome cannot cancel its download. We can cancel this caller's wait,
+        // timers and callbacks, and observe any late rejection without publishing it.
+        const installation = Transcriber.install(lang).then(
+          installed => ({ installed, error: null }),
+          error => ({ installed: false, error: String(error?.message || error) }),
+        );
+        let outcome;
+        while (!outcome) {
+          outcome = await wait(Promise.race([
+            installation,
+            new Promise(resolve => { pollTimer = setTimeout(() => resolve(null), 1500); }),
+          ]));
+          clearTimeout(pollTimer);
+          if (!outcome) {
+            availability = await wait(Transcriber.availability(lang, true));
+            onProgress({ phase: availability === 'available' ? 'ready' : 'downloading', availability });
+          }
+        }
+        availability = await wait(Transcriber.availability(lang, true));
+        const ok = availability === 'available';
+        onProgress({ phase: ok ? 'ready' : 'failed', availability, ...outcome });
+        return { ok, availability, ...outcome, fellBackToCloud: false };
+      }
+      onProgress({ phase: 'unavailable', availability });
+      if (allowCloudFallback) {
+        const remote = await wait(Transcriber.availability(lang, false));
+        return { ok: remote === 'available', availability, installed: false, fellBackToCloud: true };
+      }
+      return { ok: false, availability, installed: false, fellBackToCloud: false };
+    } finally {
+      clearTimeout(timeout);
+      clearTimeout(pollTimer);
+      signal?.removeEventListener('abort', abort);
     }
-    // 'unavailable' for on-device.
-    onProgress({ phase: 'unavailable', availability });
-    if (allowCloudFallback) {
-      const remote = await Transcriber.availability(lang, false);
-      return { ok: remote === 'available', availability, installed: false, fellBackToCloud: true };
-    }
-    return { ok: false, availability, installed: false, fellBackToCloud: false };
   }
 
   start(track, { lang = 'en-US', processLocally = true, isRestart = false } = {}) {
     const SR = getSpeechRecognition();
     if (!SR) throw new Error('SpeechRecognition is not available in this browser.');
 
+    this._detach(this.recognition, true);
+    clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    this.running = false;
+    this.lastError = null;
+    this.lastErrorMessage = '';
     this.track = track;
     this.options = { lang, processLocally };
     // Every recognizer instance starts result indices at zero. A manual Start
@@ -329,6 +371,7 @@ export class Transcriber {
     if (!isRestart) {
       this.t0 = Date.now();
       this.restarts = 0;
+      this.failedRestarts = 0;
       this.stopping = false;
     }
 
@@ -338,69 +381,129 @@ export class Transcriber {
     rec.interimResults = true;
     rec.processLocally = processLocally;
     this.recognition = rec;
+    const attemptAt = Date.now();
+    let started = false;
+    let heardSpeech = false;
 
     rec.onresult = (event) => {
+      if (this.recognition !== rec) return;
       const elapsed = Date.now() - this.t0;
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
         const result = event.results[i];
+        if (result[0].transcript.trim()) heardSpeech = true;
         this.store.update(i, result[0].transcript, result.isFinal, elapsed);
       }
-      this.onUpdate(this.store);
+      this._notify('onUpdate', this.store);
     };
 
     rec.onerror = (event) => {
+      if (this.recognition !== rec || this.stopping) return;
       this.lastError = event.error;
+      this.lastErrorMessage = event.message || '';
       // 'no-speech' and 'aborted' are routine during a long capture and are handled
       // by the restart path in onend; anything else is surfaced to the user.
       if (event.error !== 'no-speech' && event.error !== 'aborted') {
-        this.onError(event.error, event.message || '');
+        this._notify('onError', event.error, event.message || '');
       }
     };
 
     rec.onend = () => {
-      if (this.stopping || !this.running) {
+      if (this.recognition !== rec) return;
+      this._detach(rec);
+      this.running = false;
+      if (this.stopping) {
         this.running = false;
-        this.onStatus('stopped', { fatal: false, error: null });
-        this.onUpdate(this.store);
+        this._notify('onStatus', 'stopped', { fatal: false, error: null });
+        this._notify('onUpdate', this.store);
         return;
       }
-      // Fatal conditions must not be retried in a tight loop.
-      //
-      // The reason travels WITH the stop. onerror fires microseconds before
-      // this, so a host that only reads the status would overwrite its own
-      // error message with a bare "Stopped." — which is precisely what
-      // happened: a missing en-US language pack (processLocally with no pack
-      // installed fails as 'language-not-supported') reached the user as a
-      // blank word, indistinguishable from a blocked microphone or a refused
-      // service.
+      // A startup failure may end without ever firing onstart. Preserve the
+      // browser's reason; the code alone does not establish its underlying cause.
       if (this.lastError === 'not-allowed' || this.lastError === 'service-not-allowed' ||
           this.lastError === 'language-not-supported') {
         this.running = false;
-        this.onStatus('stopped', { fatal: true, error: this.lastError });
+        this._notify('onStatus', 'stopped', { fatal: true, error: this.lastError, message: this.lastErrorMessage });
         return;
       }
       if (!this.track || this.track.readyState !== 'live') {
         this.running = false;
         // Not a recognition failure: the tab simply stopped producing audio.
-        this.onStatus('stopped', { fatal: false, error: null, trackEnded: true });
+        this._notify('onStatus', 'stopped', { fatal: false, error: null, trackEnded: true });
+        return;
+      }
+      // Real speech and ordinary long silence are not failed attempts. Only
+      // repeated empty/failed sessions exhaust this consecutive-failure budget.
+      const healthy = heardSpeech || (started && Date.now() - attemptAt >= 10000 &&
+        (!this.lastError || this.lastError === 'no-speech'));
+      this.failedRestarts = healthy ? 0 : this.failedRestarts + 1;
+      if (this.failedRestarts >= 4) {
+        this._notify('onStatus', 'stopped', { fatal: true, error: this.lastError || 'restart-limit',
+          message: this.lastErrorMessage || 'Recognition repeatedly ended without producing speech.' });
         return;
       }
       this.restarts += 1;
-      this.onStatus('restarting');
-      try {
-        this.start(this.track, { ...this.options, isRestart: true });
-      } catch (e) {
-        this.running = false;
-        this.onError('restart-failed', String(e));
-      }
+      this._notify('onStatus', 'restarting');
+      const retryTimer = setTimeout(() => {
+        if (this.retryTimer !== retryTimer) return;
+        this.retryTimer = null;
+        if (this.stopping) return;
+        try {
+          this.start(this.track, { ...this.options, isRestart: true });
+        } catch (e) {
+          this.running = false;
+          this._notify('onError', 'restart-failed', String(e));
+          this._notify('onStatus', 'stopped', { fatal: true, error: 'restart-failed', message: String(e?.message || e) });
+        }
+      }, healthy ? 100 : 250 * 2 ** (this.failedRestarts - 1));
+      this.retryTimer = retryTimer;
     };
 
     rec.onstart = () => {
+      if (this.recognition !== rec || this.stopping) return;
+      clearTimeout(this.startTimer);
+      this.startTimer = null;
+      started = true;
       this.running = true;
-      this.onStatus('listening');
+      this._notify('onStatus', 'listening');
     };
 
-    rec.start(track);
+    this.startTimer = setTimeout(() => {
+      if (this.recognition !== rec || this.stopping) return;
+      this._detach(rec, true);
+      this.running = false;
+      this.lastError = 'start-timeout';
+      this.lastErrorMessage = 'Chrome did not start speech recognition within 15 seconds.';
+      this._notify('onError', this.lastError, this.lastErrorMessage);
+      this._notify('onStatus', 'stopped', { fatal: true, error: this.lastError, message: this.lastErrorMessage });
+    }, 15000);
+    try {
+      rec.start(track);
+    } catch (error) {
+      this._detach(rec, true);
+      this.running = false;
+      throw error;
+    }
+  }
+
+  _notify(observer, ...args) {
+    // Observers are outside recognition ownership. Their exceptions (including
+    // rejected promises) must not interrupt cleanup or retries. Never log text.
+    const failed = () => console.warn('TabScribe recognition observer failed:', observer);
+    try { Promise.resolve(this[observer](...args)).catch(failed); }
+    catch (e) { failed(); }
+  }
+
+  _detach(rec, abort = false) {
+    if (!rec) return;
+    rec.onresult = rec.onerror = rec.onend = rec.onstart = null;
+    if (this.recognition === rec) {
+      clearTimeout(this.startTimer);
+      this.startTimer = null;
+      this.recognition = null;
+    }
+    if (abort) {
+      try { rec.abort(); } catch (e) { /* already ended */ }
+    }
   }
 
   /**
@@ -410,14 +513,20 @@ export class Transcriber {
    */
   async stop({ flushMs = 1500 } = {}) {
     this.stopping = true;
+    clearTimeout(this.startTimer);
+    this.startTimer = null;
+    clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    const rec = this.recognition;
     if (flushMs > 0) {
       await new Promise((r) => setTimeout(r, flushMs));
     }
+    if (this.recognition !== rec) return;
     try {
-      this.recognition?.stop();
-    } catch (e) { /* already stopped */ }
+      rec?.stop();
+    } catch (e) { this._detach(rec, true); }
     this.running = false;
-    this.onUpdate(this.store);
+    this._notify('onUpdate', this.store);
   }
 
   /**
@@ -432,43 +541,23 @@ export class Transcriber {
    */
   reset() {
     this.store.clear();
-
-    const rec = this.recognition;
-    const wasRunning = this.running;
+    const wasActive = this.running || this.recognition || this.retryTimer;
     const track = this.track;
-
-    if (rec) {
-      // Detach handlers first: the abort below fires onend, which would otherwise
-      // trigger the auto-restart path and race the fresh session started here.
-      rec.onresult = null;
-      rec.onerror = null;
-      rec.onend = null;
-      rec.onstart = null;
-      try {
-        rec.abort();
-      } catch (e) {
-        try { rec.stop(); } catch (e2) { /* already stopped */ }
-      }
-    }
-    this.recognition = null;
+    this._detach(this.recognition, true);
+    clearTimeout(this.retryTimer);
+    this.retryTimer = null;
     this.running = false;
-
-    if (wasRunning && track && track.readyState === 'live' && !this.stopping) {
-      // Continue transcribing from a clean slate. isRestart is deliberately NOT set:
-      // epochs exist to keep old segments addressable, and there are no old segments
-      // left to protect after a clear.
-      //
-      // t0 is deliberately NOT reset: one capture keeps one timeline. Restarting
-      // the clock here made post-Clear timestamps count from zero again, so an
-      // Undo spliced two different clocks into the saved transcript.
+    if (wasActive && track?.readyState === 'live' && !this.stopping) {
+      // A reset starts new recognition keys but keeps the capture's clock so
+      // microphone turns and recovered history remain on the same timeline.
       try {
-        this.start(track, { ...this.options });
+        this.start(track, { ...this.options, isRestart: true });
       } catch (e) {
-        this.onError('restart-failed', String(e));
+        this._notify('onError', 'restart-failed', String(e));
+        this._notify('onStatus', 'stopped', { fatal: true, error: 'restart-failed', message: String(e?.message || e) });
       }
     }
-
-    this.onUpdate(this.store);
+    this._notify('onUpdate', this.store);
   }
 
   getText(opts) {

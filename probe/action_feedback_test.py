@@ -89,10 +89,10 @@ def acknowledgement(ui):
     click(ui, 'downloadBtn')
     time.sleep(.4)
     broke = ui.js("""({
-      text: document.getElementById('status').textContent,
-      isError: document.getElementById('status').classList.contains('error'),
+      text: document.getElementById('issues').innerText,
+      isError: !document.getElementById('issues').hidden,
     })""")
-    ui.check('a failed download still reports in the status line',
+    ui.check('a failed download reports independently of recognition status',
              broke['isError'] is True and 'could not save' in broke['text'].lower(), broke)
     ui.js("URL.createObjectURL = window.__realCreate")
 
@@ -179,7 +179,7 @@ def fallback_focus(ui):
     refused = ui.js("""({
       focused: document.activeElement ? document.activeElement.id : '',
       scratch: document.querySelectorAll('textarea').length,
-      isError: document.getElementById('status').classList.contains('error'),
+      isError: !document.getElementById('issues').hidden && document.getElementById('issues').innerText.includes('Copy failed'),
     })""")
     # A real pointer press focuses the button itself, so THAT is where focus
     # must come back to. The defect being guarded is focus landing nowhere.

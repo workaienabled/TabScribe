@@ -1,20 +1,12 @@
 // A fatal recognition error must not be erased by the "stopped" that follows.
 //
-// Reported from a real Chrome 150: the panel "wrote Stopped right after start".
-// The cause is an ordering contract, not the browser version. SpeechRecognition
-// fires onerror and then onend microseconds later. onerror produced a useful
-// message; onend overwrote it with a bare "Stopped." before it could be read, so
-// every distinct failure — no language pack installed, microphone blocked, the
-// recognition service refusing — arrived at the user as the same blank word.
+// A Chrome 150 user reported "Stopped right after start", but the browser's
+// error code and model state were not captured. The cause remains unproven.
+// These tests establish an error-ordering contract, not a diagnosis of that
+// report: a fatal onerror followed by onend must retain its reason.
 //
-// The most likely cause of that particular report is `language-not-supported`:
-// with processLocally = true and no en-US pack installed, start() fails exactly
-// that way (MDN, SpeechRecognition.available()). The user could not have known,
-// because the reason was destroyed on its way to the screen.
-//
-// So the Transcriber must tell its host WHY it stopped. These tests drive the
-// real class with a fake recognizer, asserting the callback sequence rather than
-// any wording.
+// These cases cover already-running sessions. recognition-lifecycle.test.mjs
+// also covers failures before onstart, stale events, start throws and retries.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Transcriber } from '../extension/transcriber.js';

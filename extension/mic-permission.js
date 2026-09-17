@@ -22,6 +22,8 @@
  * The request runs synchronously inside the button's click handler, because the
  * prompt requires a live user activation.
  */
+import { MicTranscriber, MIC_MESSAGES, stopStream } from './mic.js';
+
 const el = {
   allow: document.getElementById('allowBtn'),
   skip: document.getElementById('skipBtn'),
@@ -35,60 +37,57 @@ function setStatus(text, isError) {
 
 /** Tell the panel how this ended, so it can stop asking. */
 async function report(outcome) {
+  let timeout;
   try {
-    await chrome.storage.local.set({ micGrant: { outcome, at: Date.now() } });
-  } catch (e) { /* the panel re-checks the real permission state anyway */ }
+    return await Promise.race([
+      chrome.storage.local.set({ micGrant: { outcome, at: Date.now() } }).then(() => true),
+      new Promise(resolve => { timeout = setTimeout(() => resolve(false), 2000); }),
+    ]);
+  } catch (e) {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
+let cancelled = false;
+window.addEventListener('pagehide', () => { cancelled = true; });
+
 el.allow.addEventListener('click', () => {
+  cancelled = false;
   el.allow.disabled = true;
   setStatus('Waiting for Chrome…');
-  // Synchronous inside the gesture: anything awaited first loses the activation
-  // and Chrome refuses to show the prompt.
-  let pending;
-  try {
-    pending = navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    });
-  } catch (e) {
-    el.allow.disabled = false;
-    setStatus(`Could not ask for the microphone: ${e && e.message ? e.message : e}`, true);
-    return;
-  }
-
-  pending.then(async (stream) => {
-    // The grant is what matters, not this stream. Release it immediately so the
-    // recording indicator does not stay lit on a page about to close.
-    for (const track of stream.getTracks()) {
-      try { track.stop(); } catch (e) { /* best effort */ }
+  // requestStream invokes getUserMedia synchronously and classifies both thrown
+  // and asynchronous failures consistently with the panel's microphone path.
+  MicTranscriber.requestStream().then(async (result) => {
+    stopStream(result.stream);
+    if (cancelled) return;
+    // The permission result is already known. Storage only notifies the panel;
+    // it must neither conceal a grant nor turn one into a permission failure.
+    const outcome = result.ok ? 'Microphone allowed.'
+      : `${MIC_MESSAGES[result.reason] || MIC_MESSAGES.failed} The meeting transcript is unaffected.`;
+    el.allow.disabled = result.ok;
+    if (result.ok) el.allow.textContent = 'Allowed';
+    setStatus(outcome, !result.ok);
+    const reported = await report(result.ok ? 'granted' : result.reason);
+    if (cancelled) return;
+    if (!reported) {
+      setStatus(`${outcome} The panel could not be notified. Return to TabScribe and turn the microphone off and on in Preferences to retry.`, true);
+      return;
     }
-    await report('granted');
+    if (!result.ok) return;
     setStatus('Microphone allowed. You can close this tab — TabScribe will use it '
       + 'automatically from now on.');
-    el.allow.textContent = 'Allowed';
-    // Closing immediately looks like a glitch; leave it readable for a moment.
-    setTimeout(() => { window.close(); }, 1800);
-  }, async (e) => {
-    const name = String(e && e.name ? e.name : '');
-    el.allow.disabled = false;
-    if (name === 'NotAllowedError') {
-      await report('denied');
-      setStatus('Microphone not allowed. The meeting transcript is unaffected — only '
-        + 'your own speech will be missing from saved files. You can allow it later '
-        + 'from the address-bar icon.', true);
-      return;
-    }
-    if (name === 'NotFoundError') {
-      await report('no-device');
-      setStatus('No microphone was found. Only the meeting audio will be saved.', true);
-      return;
-    }
-    await report('failed');
-    setStatus(`The microphone could not be started: ${e && e.message ? e.message : e}`, true);
+    setTimeout(() => { if (!cancelled) window.close(); }, 1800);
   });
 });
 
 el.skip.addEventListener('click', async () => {
-  await report('skipped');
+  cancelled = true;
+  setStatus('Microphone skipped. Notifying TabScribe…');
+  if (!await report('skipped')) {
+    setStatus('Microphone skipped. The panel could not be notified. Return to TabScribe and turn off the microphone in Preferences.', true);
+    return;
+  }
   window.close();
 });
