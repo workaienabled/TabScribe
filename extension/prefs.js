@@ -123,7 +123,28 @@ export function isLoaded() {
 
 /** Merge and persist. Returns the new full set. */
 export async function set(patch) {
-  cache = { ...cache, ...validated(patch) };
+  // The panel writes its whole control set on any change, so the keys that
+  // differ from what the controls were showing (the cache) are the change;
+  // the rest is an echo. Normally that distinction is moot. After a failed
+  // load it matters: the echoed part is the safety fallback (includeMic:false),
+  // not a choice the user made, and persisting it would overwrite their real
+  // saved value for good. So retry the read first, and let the stored values
+  // win for every key this write does not explicitly change.
+  const changes = Object.fromEntries(
+    Object.entries(validated(patch)).filter(([key, value]) => value !== cache[key]));
+  let base = cache;
+  if (errors.load !== null) {
+    try {
+      const got = await chrome.storage.local.get(KEY);
+      base = { ...DEFAULTS, ...validated(got?.[KEY]) };
+      cache = { ...base, ...changes };
+      // Observers re-apply the recovered values to their controls.
+      reportError('load', null);
+    } catch (e) {
+      base = cache; // still unreadable: the explicit change is all we know
+    }
+  }
+  cache = { ...base, ...changes };
   const values = { ...cache };
   // Each request keeps its own snapshot and waits for the preceding write.
   // Otherwise a slow earlier write can overwrite a newer choice on completion.

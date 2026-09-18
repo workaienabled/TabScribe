@@ -187,3 +187,62 @@ test('preference errors are observable without throwing and recover per operatio
   assert.equal(events.length, 4, 'unsubscribed views must no longer receive events');
   await tick();
 });
+
+// After load() fails, the in-memory set is defaults with the microphone forced
+// off. That "off" is a safety fallback, not a choice the user made. A later
+// unrelated change (the panel writes the whole control set) must not persist
+// it over the real saved value, and once the stored values become readable
+// again they win over the fallback.
+test('a failed load does not let the next write persist the safety fallback over the saved choice', async (t) => {
+  let reads = 0;
+  let stored = { includeMic: true, lang: 'fr-FR', timestamps: false };
+  const { prefs } = await fixture(t, {
+    async get() {
+      reads += 1;
+      if (reads === 1) throw new Error('storage busy');
+      return { prefs: structuredClone(stored) };
+    },
+    async set(value) { stored = structuredClone(value.prefs); },
+  });
+  await prefs.load();
+  assert.equal(prefs.get().includeMic, false, 'kept off until the saved choice can be checked');
+  const after = await prefs.set({ includeMic: false, lang: 'fr-FR', timestamps: true });
+  assert.equal(stored.timestamps, true, 'the change the user made is persisted');
+  assert.equal(stored.includeMic, true, 'the saved microphone choice is not overwritten by the fallback');
+  assert.equal(stored.lang, 'fr-FR');
+  assert.equal(after.includeMic, true, 'the recovered saved value replaces the fallback in memory');
+});
+
+test('a failed load followed by an explicit microphone choice persists that choice', async (t) => {
+  let reads = 0;
+  let stored = { includeMic: false };
+  const recovered = [];
+  const { prefs } = await fixture(t, {
+    async get() {
+      reads += 1;
+      if (reads === 1) throw new Error('storage busy');
+      return { prefs: structuredClone(stored) };
+    },
+    async set(value) { stored = structuredClone(value.prefs); },
+  });
+  prefs.onError((report) => recovered.push({ ...report, includeMic: prefs.get().includeMic }));
+  await prefs.load();
+  // The only change the control can make from the fallback "off" is to "on".
+  await prefs.set({ includeMic: true });
+  assert.equal(stored.includeMic, true);
+  assert.deepEqual(recovered.map(r => [r.operation, r.error]), [['load', 'storage busy'], ['load', null]]);
+  assert.equal(recovered.at(-1).includeMic, true, 'observers see the recovered set including the change');
+  await prefs.set({ includeMic: false });
+  assert.equal(stored.includeMic, false);
+});
+
+test('a load that keeps failing still records the user\'s explicit change', async (t) => {
+  let stored = { includeMic: true };
+  const { prefs } = await fixture(t, {
+    async get() { throw new Error('storage busy'); },
+    async set(value) { stored = structuredClone(value.prefs); },
+  });
+  await prefs.load();
+  await prefs.set({ includeMic: false, timestamps: true });
+  assert.equal(stored.timestamps, true);
+});

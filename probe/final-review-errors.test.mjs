@@ -44,7 +44,7 @@ function controller(t, { respond = () => undefined, availability = async () => '
     'start', 'stop', 'teardown', 'armCapture', 'armCaptureAttempt', 'workerRequest', 'replyIsStale',
     'setRecording', 'setStatus', 'setState', 'showIssue', 'flushAutosave', 'scheduleAutosave',
     'requestMicStream', 'attachMic', 'disableMic', 'onMicState', 'onMicUpdate', 'setMicHint',
-    'setMicIndicator', 'refreshMicPermission', 'langName', 'showModelPanel', 'hideModelPanel',
+    'setMicIndicator', 'refreshMicPermission', 'onMicGrantReported', 'langName', 'showModelPanel', 'hideModelPanel',
     'startModelTimer', 'stopModelTimer', 'onModelProgress', 'onPageHide', 'restoreAutosave',
     'recordingInProgress', 'explainReadOnlyView',
   ];
@@ -407,6 +407,84 @@ test('the microphone still attaches during the recognizer\'s restart gap', async
   assert.match(c.el.micHint.textContent, /being transcribed/);
   assert.equal(c.h.micBlocked, false);
 });
+
+// mic-permission.html reports its outcome through chrome.storage.local and
+// tells the user "TabScribe will use it automatically from now on". A panel
+// that is already open must hear that report: otherwise it keeps offering the
+// Allow button and records the meeting in progress without the microphone.
+test('an open panel picks up the grant the permission page reports', async t => {
+  let permission = 'prompt';
+  microphoneBrowser(t, { permission: () => permission });
+  const c = controller(t);
+  assert.ok(/chrome\.storage\.onChanged\.addListener\(onMicGrantReported\)/.test(source),
+    'the panel must subscribe to the permission page\'s report');
+  c.el.includeMic.checked = true;
+  await c.h.refreshMicPermission();
+  assert.equal(c.h.micGranted, false);
+  assert.equal(c.el.micGrant.hidden, false, 'no grant yet: the Allow button is offered');
+  assert.equal((await c.h.start()).ok, true);
+  assert.equal(c.h.mic?.running ?? false, false, 'without a grant, Start must not open the microphone');
+
+  permission = 'granted';
+  await c.h.onMicGrantReported({ micGrant: { newValue: { outcome: 'granted', at: 1 } } }, 'local');
+  await settle();
+  assert.equal(c.h.micGranted, true);
+  assert.equal(c.el.micGrant.hidden, true, 'the Allow button is withdrawn once the grant exists');
+  assert.equal(c.h.mic?.running, true, 'the meeting in progress gains the microphone');
+  assert.match(c.el.micHint.textContent, /being transcribed/);
+  assert.equal(c.el.micStatus.dataset.state, 'recording');
+  assert.equal(c.h.transcriber.running, true, 'the meeting recognizer is untouched');
+  assert.equal(c.instances.length, 2, 'one meeting recognizer plus one microphone recognizer');
+});
+
+test('a grant reported while idle only refreshes the permission state', async t => {
+  let permission = 'prompt';
+  microphoneBrowser(t, { permission: () => permission });
+  const c = controller(t);
+  c.el.includeMic.checked = true;
+  await c.h.refreshMicPermission();
+  permission = 'granted';
+  await c.h.onMicGrantReported({ micGrant: { newValue: { outcome: 'granted', at: 1 } } }, 'local');
+  await settle();
+  assert.equal(c.h.micGranted, true);
+  assert.equal(c.el.micGrant.hidden, true);
+  assert.equal(c.h.mic?.running ?? false, false, 'nothing is recording, so nothing opens the microphone');
+  assert.equal(c.instances.length, 0);
+});
+
+test('the panel ignores unrelated storage changes and other areas', async t => {
+  let queries = 0;
+  microphoneBrowser(t, { permission: () => { queries += 1; return 'prompt'; } });
+  const c = controller(t);
+  await c.h.onMicGrantReported({ prefs: { newValue: {} } }, 'local');
+  await c.h.onMicGrantReported({ micGrant: { newValue: { outcome: 'granted', at: 1 } } }, 'session');
+  await settle();
+  assert.equal(queries, 0);
+});
+
+// A microphone failure recorded earlier this session stops Start from retrying
+// (micBlocked). The permission page's "granted" report means the device just
+// worked; keeping the old failure would make the user toggle the option to get
+// what they were promised. Any other outcome is not evidence of recovery.
+for (const [outcome, permission, blockedAfter] of [
+  ['granted', 'granted', false],
+  ['denied', 'denied', true],
+  ['skipped', 'prompt', true],
+]) {
+  test(`a "${outcome}" report ${blockedAfter ? 'keeps' : 'clears'} an earlier microphone failure`, async t => {
+    microphoneBrowser(t, { permission: () => permission });
+    const c = controller(t);
+    c.el.includeMic.checked = true;
+    c.h.disableMic('device-busy', 'Device was busy');
+    assert.equal(c.h.micBlocked, true);
+    assert.equal(c.el.issues.hidden, false);
+    await c.h.onMicGrantReported({ micGrant: { newValue: { outcome, at: 1 } } }, 'local');
+    await settle();
+    assert.equal(c.h.micBlocked, blockedAfter);
+    assert.equal(c.h.issues.has('microphone'), blockedAfter, 'the stale failure leaves with the block');
+    if (!blockedAfter) assert.doesNotMatch(c.el.micHint.textContent, /busy/);
+  });
+}
 
 // Closing the panel destroys the document without any prompt (measured). The
 // autosave is debounced by 1.2 s, so the last words spoken before a close were

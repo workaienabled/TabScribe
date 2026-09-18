@@ -1883,6 +1883,28 @@ async function openMicPermissionPage() {
 }
 
 /**
+ * The permission page reports its outcome through chrome.storage.local (see
+ * mic-permission.js report()), and promises the user that TabScribe will use
+ * the microphone "automatically from now on". This document is usually still
+ * open when that lands, so it re-reads the real permission state rather than
+ * trusting the report, and — if a meeting is being recorded with the option on
+ * — opens the microphone now instead of on some later Record press. With a
+ * grant in hand getUserMedia cannot prompt, so no gesture is needed.
+ */
+async function onMicGrantReported(changes, area) {
+  if (area !== 'local' || !changes.micGrant) return;
+  // "granted" means getUserMedia just succeeded on that page: a device-busy or
+  // denied failure recorded earlier this session no longer describes anything,
+  // and keeping it would make Start skip the microphone the user just allowed.
+  if (changes.micGrant.newValue?.outcome === 'granted') micBlocked = false;
+  const state = await refreshMicPermission();
+  if (state !== 'granted' || !el.includeMic.checked || !transcriber?.active
+      || el.record.getAttribute('aria-pressed') !== 'true' || mic?.running) return;
+  attachMic(requestMicStream(), el.lang.value, el.localOnly.checked);
+}
+chrome.storage.onChanged.addListener(onMicGrantReported);
+
+/**
  * The microphone died on its own — permission revoked mid-session, device
  * unplugged, recognizer gave up. Without this the panel keeps claiming the
  * microphone is being transcribed when it no longer is.
@@ -2365,6 +2387,14 @@ async function init() {
       ? `Saved preferences could not be loaded: ${error}. Defaults are in use with the microphone kept off for safety; check Preferences before recording.`
       : `Preferences could not be saved: ${error}. This view uses your choices, but they may reset when reopened. Change a preference to retry.`
       : '');
+    // A later write re-read the saved values successfully: the controls were
+    // showing the safety fallback, so bring them back to what the user saved
+    // (plus the change they just made). Language and mode apply at the next
+    // recording; the microphone starts with the next Record.
+    if (operation === 'load' && !error && prefs.isLoaded()) {
+      applyPrefs(prefs.get());
+      void refreshMicPermission();
+    }
   });
   applyPrefs(await prefs.load());
   // The view-switch control names the view it goes TO, not the one it is in.
