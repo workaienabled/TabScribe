@@ -55,7 +55,7 @@ function dataController({ meeting = '', microphone = '', includeMic = true, save
     el, Transcriber, TranscriptStore, MicTranscriber, mergeTranscripts,
     transcriber, mic, lastStore: transcriber.store, savedText,
     clearedSnapshot: null, screenHidden: new Set(), nodes: new Map(),
-    heldUpdates: false, following: true,
+    heldUpdates: false, following: true, autosaveTimer: null, clearTimeout() {},
     window: { getSelection: () => ({ anchorNode: null }) },
     document: {},
     openDeleteConfirm() { confirmed += 1; },

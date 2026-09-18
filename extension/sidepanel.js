@@ -564,6 +564,12 @@ function restoreStoredTranscript(saved) {
   }
   savedText = ''; // Old download-request flags are not evidence of a completed file.
   render(transcriber.store);
+  // render() scheduled an autosave of the text that was just read back. That
+  // write is redundant, and once the panel flushes on pagehide it is harmful:
+  // a pop-out window may acknowledge a newer copy in the meantime, and this
+  // document's stale one would overwrite it. Only new content earns a write.
+  clearTimeout(autosaveTimer);
+  autosaveTimer = null;
 }
 
 /** Restore a transcript left behind by a previous panel document. */
@@ -1603,8 +1609,23 @@ async function stop({ reason = '' } = {}) {
   }
 }
 
-// Release the capture when the panel goes away, so the tab is not held open.
-window.addEventListener('pagehide', () => { teardown(); });
+// The panel going away is the one notification this document gets: Chrome
+// destroys a side panel without any prompt. The autosave is debounced, so the
+// last seconds of speech may only exist in memory. Issue the pending write
+// first, then release the capture so the tab is not held open. Neither is
+// awaited: the document is unloading and nothing here can be waited for.
+//
+// Only a write that is already scheduled is issued. An unconditional flush
+// from a document that has not restored anything yet (init() still waiting
+// for a hand-off, or the restore itself failed) would find an empty store and
+// REMOVE the previous document's recovery copy — the one thing this exists to
+// protect. flushAutosave() also refuses on its own when another view owns the
+// text.
+function onPageHide() {
+  if (autosaveTimer) void flushAutosave();
+  void teardown();
+}
+window.addEventListener('pagehide', onPageHide);
 
 /**
  * The surviving panel document's way back.

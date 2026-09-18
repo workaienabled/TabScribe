@@ -45,7 +45,7 @@ function controller(t, { respond = () => undefined, availability = async () => '
     'setRecording', 'setStatus', 'setState', 'showIssue', 'flushAutosave', 'scheduleAutosave',
     'requestMicStream', 'attachMic', 'disableMic', 'onMicState', 'onMicUpdate', 'setMicHint',
     'setMicIndicator', 'refreshMicPermission', 'langName', 'showModelPanel', 'hideModelPanel',
-    'startModelTimer', 'stopModelTimer', 'onModelProgress',
+    'startModelTimer', 'stopModelTimer', 'onModelProgress', 'onPageHide', 'restoreAutosave',
     'recordingInProgress', 'explainReadOnlyView',
   ];
   const functions = names.map(name => {
@@ -408,6 +408,40 @@ test('the microphone still attaches during the recognizer\'s restart gap', async
   assert.equal(c.h.micBlocked, false);
 });
 
+// Closing the panel destroys the document without any prompt (measured). The
+// autosave is debounced by 1.2 s, so the last words spoken before a close were
+// only persisted if the timer happened to fire first. pagehide is the one
+// notification the panel does get, so the pending write is issued there.
+test('closing the panel flushes the pending autosave before releasing capture', async t => {
+  const c = controller(t);
+  assert.ok(/window\.addEventListener\('pagehide', onPageHide\)/.test(source),
+    'the panel must flush on pagehide, not only tear down');
+  assert.equal((await c.h.start()).ok, true);
+  c.h.transcriber.store.update(0, 'Final words before closing', true, 0);
+  c.h.render(c.h.transcriber.store);
+  assert.equal(c.writes.some(w => w.liveTranscript), false, 'debounced: nothing written yet');
+  c.h.onPageHide();
+  await settle();
+  const saved = c.writes.filter(w => w.liveTranscript).at(-1);
+  assert.ok(saved, 'the pending snapshot is written on pagehide');
+  assert.equal(saved.liveTranscript.snapshot.segments[0].text, 'Final words before closing');
+  assert.equal(c.h.armed, false, 'capture is still released');
+});
+
+test('a handed-off document does not overwrite the receiver\'s copy on pagehide', async t => {
+  const c = controller(t, { respond: message => {
+    if (message.type === 'OPEN_WINDOW') return { ok: true, reused: false, panelClosed: true };
+  } });
+  assert.equal((await c.h.start()).ok, true);
+  c.h.transcriber.store.update(0, 'Moved to the window', true, 0);
+  await c.h.popOut();
+  assert.equal(c.h.handedOff, true);
+  c.writes.length = 0;
+  c.h.onPageHide();
+  await settle();
+  assert.equal(c.writes.some(w => w.liveTranscript), false);
+});
+
 // A receiver that waited for an announced transfer and then failed must not be
 // left saying "Bringing the transcript back…" next to its failure alert.
 test('a failed receive replaces the waiting status with the paused state', async t => {
@@ -451,6 +485,37 @@ test('survivor reclaim explains a missing invocation like a fresh panel does', a
   assert.equal(c.el.record.disabled, false, '"press Record" must be actionable');
   assert.equal(c.el.popout.disabled, false);
   assert.equal(await c.h.flushAutosave(), true, 'the owner persists its copy');
+});
+
+// Closing the panel before init() has restored anything must not touch the
+// recovery copy a previous document left behind: an empty store here means
+// "not restored yet", not "nothing to keep". Only a write that is already
+// scheduled — speech rendered since the last flush — is worth issuing.
+test('closing before the restore completes leaves the recovery copy alone', async t => {
+  const c = controller(t);
+  c.storage.liveTranscript = snapshot('Previous document\'s last words');
+  c.h.onPageHide();
+  await settle();
+  assert.deepEqual(c.writes, [], 'no write and no removal');
+  assert.equal(c.storage.liveTranscript.snapshot.segments[0].text, 'Previous document\'s last words');
+});
+
+// Restoring the recovery copy renders it, and a render schedules an autosave —
+// of the very text that was just read back. That write is redundant, and it is
+// dangerous: another document (a pop-out window acknowledging a hand-off) can
+// write a newer copy in the meantime, and this document's stale copy would then
+// overwrite it 1.2 s later, or on pagehide. Only new content earns a write.
+test('restoring the recovery copy does not schedule a write of it', async t => {
+  const c = controller(t);
+  c.storage.liveTranscript = snapshot('Restored from a previous document');
+  assert.equal(await c.h.restoreAutosave(), true);
+  assert.equal(c.h.autosaveTimer, null, 'a restore-only render must not schedule an autosave');
+  // Someone else owns the newest copy now.
+  c.storage.liveTranscript = snapshot('Newer copy written by the pop-out window');
+  c.h.onPageHide();
+  await settle();
+  assert.deepEqual(c.writes, []);
+  assert.equal(c.storage.liveTranscript.snapshot.segments[0].text, 'Newer copy written by the pop-out window');
 });
 
 /* ------------------------------------------------ independent review findings */

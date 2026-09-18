@@ -38,6 +38,10 @@ def run(ui):
     ui.check('successful preference retry clears the persistence error', not issue(ui), issue(ui))
 
     corrupt={'snapshot': {'epoch':0, 'segments':[{'key':'0:0','text':None,'isFinal':True,'startedAt':0}]}, 'at':1}
+    # The preference change above re-rendered and scheduled an autosave. Let it
+    # land first: the panel flushes a pending write on pagehide, so injecting
+    # the damaged copy now and reloading would have the live text overwrite it.
+    time.sleep(1.4)
     ui.js(f"chrome.storage.session.set({{liveTranscript:{json.dumps(corrupt)}}})")
     ui.chrome.send('Page.reload', session_id=ui.sid)
     ui.chrome.wait_for_js(ui.sid,"document.getElementById('issues')?.innerText.includes('could not be restored')")
@@ -76,6 +80,26 @@ def run(ui):
                 text=ui.download_and_read(folder)
                 ui.check('Undo restores actual microphone bytes, not only button state',
                          'My own microphone sentence.' in text and 'You:' in text,text)
+
+    # Closing the panel destroys the document without a prompt, and the autosave
+    # is debounced by 1.2 s. Text that reached the store in that window must not
+    # vanish: the panel flushes the scheduled write on pagehide. Real user path:
+    # Delete (the recovery copy is removed once the debounce fires), then Undo
+    # (the text is back in the store, a write is scheduled), then close at once.
+    ui.fixture(2)
+    ui.delete_transcript()
+    time.sleep(1.4)
+    ui.check('the deleted transcript leaves the recovery copy once autosave settles',
+             ui.js("chrome.storage.session.get('liveTranscript').then(v=>v.liveTranscript===undefined)"))
+    ui.js("document.getElementById('undoClearBtn').click()")
+    ui.chrome.send('Page.reload', session_id=ui.sid)
+    ui.chrome.wait_for_js(ui.sid,"!!document.getElementById('recordBtn')",timeout=20)
+    time.sleep(0.5)
+    stored=ui.js("chrome.storage.session.get('liveTranscript').then(v=>v.liveTranscript)")
+    ui.check('text restored by Undo survives an immediate close (pagehide flush)',
+             stored is not None and len(stored.get('snapshot',{}).get('segments',[]))==2, stored)
+    ui.check('and the reopened panel shows it',
+             ui.js("document.querySelectorAll('.seg').length")==2)
 
 
 if __name__=='__main__':
