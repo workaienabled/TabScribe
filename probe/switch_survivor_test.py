@@ -88,6 +88,12 @@ def state_of(chrome, sid):
     })""", await_promise=False)
 
 
+# Words of spoken text on screen. Segment innerText only: the transcript
+# container also holds hidden timestamp spans, which textContent would count.
+SEG_WORDS = ("[...document.querySelectorAll('#transcript .seg')].map(e => e.innerText).join(' ')"
+             ".trim().split(/\\s+/).filter(Boolean).length")
+
+
 def main():
     checks = Checks()
     if os.path.isdir(PROFILE):
@@ -252,6 +258,77 @@ def main():
                        chrome.evaluate(s, """(() => (!document.getElementById('switchLog')
                                                 && !document.getElementById('switchLogText')))()""",
                                        await_promise=False))
+
+        # --- The window closed by hand, with a survivor behind it ------------
+        # No hand-off is staged when the user closes the window; the window's
+        # last autosave is the only copy of what it heard. The surviving panel
+        # document must adopt that copy and take the tab back: not sit inert,
+        # and not show its own pre-pop-out text, which its next autosave would
+        # write over the window's.
+        live_panel = next((t for t in after if t['targetId'] in
+                           {p['targetId'] for p in panels(chrome)}), None)
+        if live_panel:
+            psid2 = chrome.attach(live_panel['targetId'])
+            chrome.evaluate(psid2, """(() => {
+              const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+              chrome.runtime.sendMessage = (msg, ...rest) => {
+                if (msg && msg.type === 'OPEN_WINDOW') msg = {...msg, closePanel: false};
+                return send(msg, ...rest);
+              };
+              return true;
+            })()""", await_promise=False)
+            before_words = chrome.evaluate(psid2, SEG_WORDS, await_promise=False)
+            real_click(chrome, psid2, 'popoutBtn')
+            time.sleep(6)
+            win2 = find(chrome, 'sidepanel.html?view=window')
+            checks.add('a second pop-out leaves the survivor behind again',
+                       bool(win2) and any(t['targetId'] == live_panel['targetId'] for t in panels(chrome)))
+            if win2:
+                wsid2 = chrome.attach(win2['targetId'])
+                chrome.wait_for_js(wsid2, "!!document.getElementById('recordBtn')", timeout=30)
+                try:
+                    chrome.wait_for_js(wsid2, "document.getElementById('dot').dataset.state === 'listening'",
+                                       timeout=45)
+                except RuntimeError:
+                    pass
+                # Let the window hear speech the survivor never will, and let
+                # its autosave debounce (1.2 s) settle so the copy is durable.
+                chrome.evaluate(sid, "(() => { const a=document.getElementById('audio'); a.currentTime=0; return a.play(); })()")
+                time.sleep(10)
+                win_words = chrome.evaluate(wsid2, SEG_WORDS, await_promise=False)
+                checks.add('the window heard more than the survivor holds',
+                           win_words > before_words, f'{before_words} -> {win_words} words')
+                chrome.send('Target.closeTarget', targetId=win2['targetId'])
+                try:
+                    chrome.wait_for_js(
+                        psid2, "document.getElementById('recordBtn').disabled === false", timeout=20)
+                except RuntimeError:
+                    pass
+                time.sleep(2)
+                survivor = chrome.evaluate(psid2, """({
+                  pressed: document.getElementById('recordBtn').getAttribute('aria-pressed'),
+                  recordDisabled: document.getElementById('recordBtn').disabled,
+                  words: %s,
+                  status: document.getElementById('status').textContent,
+                })""" % SEG_WORDS, await_promise=False)
+                print(f'  survivor after the window closed by hand: {json.dumps(survivor)}', flush=True)
+                checks.add('the survivor takes the tab back when the window closes by hand',
+                           survivor['recordDisabled'] is False, json.dumps(survivor))
+                checks.add("and shows the window's transcript, not its own stale copy",
+                           survivor['words'] >= win_words - 1,
+                           f"survivor {survivor['words']} vs window {win_words} words")
+                checks.add('and its status says the transcript was restored',
+                           'restored' in survivor['status'].lower(), survivor['status'])
+                # The recovery copy must still be the window's, not overwritten
+                # by the survivor adopting it.
+                time.sleep(2)
+                saved = chrome.evaluate(psid2, """(async () => {
+                  const s = await chrome.storage.session.get('liveTranscript');
+                  const segs = s.liveTranscript?.snapshot?.segments || [];
+                  return segs.map(x => x.text).join(' ').trim().split(/\\s+/).length;
+                })()""", await_promise=True)
+                checks.add("the recovery copy still holds the window's text",
+                           saved >= win_words - 1, f'saved {saved} vs window {win_words} words')
     finally:
         try:
             chrome.kill()

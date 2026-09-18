@@ -293,6 +293,13 @@ claims it, re-arms, resumes. The worker broadcasts `SWITCHED_BACK` the moment it
 stores the snapshot, so the survivor acts without depending on focus. Verified
 load-bearing: with the broadcast removed, the survivor stays at `stopped`.
 
+The same survivor is also what is left when the user closes the window by hand.
+Nothing is staged then; the window's last autosave is the only copy of what it
+heard. The survivor adopts that copy and takes the tab back (it was sitting on
+"Moved to its own window" with its pre-pop-out text, and would have autosaved
+over the window's copy), triggered by a `WINDOW_CLOSED` broadcast the worker
+sends after clearing the window record, with focus as the fallback.
+
 ### The fifth cause, found in the user's own Chrome
 
 The switch log the user pasted ended at `BACK_TO_PANEL sent {"ok":false}` — a

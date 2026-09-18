@@ -425,6 +425,17 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
             await chrome.storage.session.remove(WINDOW_KEY);
           }
         }
+        // An inert panel that already handed its transcript over only asks
+        // for the window to be focused. With that window gone there is nothing
+        // to focus, and creating a new receiver would stage an EMPTY hand-off:
+        // its acknowledgement overwrites the recovery copy — the closed
+        // window's whole transcript — with nothing. The panel takes the tab
+        // back through its own reclaim path instead.
+        if (msg.focusOnly) {
+          sendResponse({ ok: false, safeToResume: false, windowGone: true,
+            error: 'The TabScribe window is no longer open.' });
+          return;
+        }
 
         // Window size: the stored preference is the authority, because the
         // window records its own size on resize and the requesting panel may
@@ -632,6 +643,14 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
           enabled: true,
         });
       }
+      // A surviving panel document (one sidePanel.close() failed to remove)
+      // is inert behind that window. Tell it the window is gone, AFTER the
+      // record is cleared, so its reclaim finds no other owner. Its focus
+      // event is not a substitute: it can fire before the record is removed,
+      // or never. No listener is not an error.
+      try {
+        await chrome.runtime.sendMessage({ type: 'WINDOW_CLOSED', windowId });
+      } catch (e) { /* no panel document is open */ }
     }
   } catch (e) {
     await reportWorkerError('Could not restore the sidebar after closing the window', e);

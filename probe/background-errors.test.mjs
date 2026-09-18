@@ -479,6 +479,62 @@ test('window removal never sends an invalid stored tab to sidePanel.setOptions',
   assert.ok(!w.calls.some((c) => c.name === 'sidePanel.setOptions'));
 });
 
+// A surviving panel document learns that its window closed by hand from the
+// worker, not from a focus event that may never come or may come before the
+// window record is gone. Broadcast only for TabScribe's own window, and only
+// after the record is gone, so a reclaim that hears it finds no owner.
+test('closing the pop-out window by hand is broadcast to the panel after the record is cleared', async () => {
+  const order = [];
+  const w = worker({ session: { popoutWindowId: 2, targetTabId: 7 }, overrides: {
+    'session.remove': async (key) => { order.push(`remove:${key}`); delete w.data[key]; },
+    'runtime.sendMessage': async (message) => { order.push(`message:${message.type}`); },
+  } });
+  await w.emit('removed', 2);
+  assert.deepEqual(order, ['remove:popoutWindowId', 'message:WINDOW_CLOSED']);
+});
+
+test('closing some other window is not reported as the pop-out closing', async () => {
+  const w = worker({ session: { popoutWindowId: 2, targetTabId: 7 } });
+  await w.emit('removed', 9);
+  assert.ok(!w.calls.some((c) => c.name === 'runtime.sendMessage'));
+  assert.equal(w.data.popoutWindowId, 2);
+});
+
+test('no panel listening for the window-closed broadcast is not an error', async () => {
+  const w = worker({ session: { popoutWindowId: 2, targetTabId: 7 }, overrides: {
+    'runtime.sendMessage': async () => { throw new Error('Receiving end does not exist.'); },
+  } });
+  await assert.doesNotReject(w.emit('removed', 2));
+  assert.equal(w.data.popoutWindowId, undefined);
+  assert.ok(!w.calls.some((c) => c.name === 'action.setTitle' && /Receiving end/.test(JSON.stringify(c.args))));
+});
+
+// An inert panel that already handed its transcript to a window presses Window
+// only to focus it. If that window is gone, creating a new one would stage an
+// EMPTY hand-off whose acknowledgement overwrites the recovery copy — the closed
+// window's whole transcript — with nothing. Refuse, and say the window is gone
+// so the panel can take the tab back instead.
+test('a focus-only request for a window that is gone creates nothing and stages nothing', async () => {
+  const kept = { snapshot: { segments: [{ text: 'Twenty minutes of speech in the window' }] }, micText: null, savedText: '', at: 5 };
+  const w = worker({ session: { targetTabId: 7, liveTranscript: clone(kept) } });
+  const reply = await w.request({ type: 'OPEN_WINDOW', focusOnly: true, resume: false, sourceWindowId: 1 });
+  assert.equal(reply.ok, false);
+  assert.equal(reply.windowGone, true);
+  assert.equal(reply.safeToResume, false, 'nothing was staged; the panel reclaims through its own path');
+  assert.match(reply.error, /no longer open/i);
+  assert.ok(!w.calls.some((c) => c.name === 'windows.create'), 'no new receiver');
+  assert.equal(w.data.handoffSnapshot, undefined, 'nothing staged');
+  assert.deepEqual(w.data.liveTranscript, kept, 'the recovery copy is untouched');
+});
+
+test('a focus-only request for a live window still focuses it', async () => {
+  const w = worker({ session: { popoutWindowId: 2, targetTabId: 7 } });
+  const reply = await w.request({ type: 'OPEN_WINDOW', focusOnly: true, resume: false, sourceWindowId: 1 });
+  assert.equal(reply.ok, true);
+  assert.equal(reply.reused, true);
+  assert.ok(w.calls.some((c) => c.name === 'windows.update'));
+});
+
 for (const type of ['OPEN_WINDOW', 'BACK_TO_PANEL']) {
   test(`${type} remains successful if bookkeeping APIs fail after durable acceptance`, async () => {
     let accepted = false;

@@ -1306,12 +1306,21 @@ async function popOut() {
     }
     safeToResume = false;
     const res = await workerRequest({
-      type: 'OPEN_WINDOW', ...payload, resume: wasRunning,
+      type: 'OPEN_WINDOW', ...payload, resume: wasRunning, focusOnly,
       sourceWindowId: host.windowId,
       width: prefs.get().windowWidth, height: prefs.get().windowHeight,
     });
     safeToResume = released && res?.ok === false && res.safeToResume === true;
-    switchLog('OPEN_WINDOW reply', { ok: !!res?.ok, reused: !!res?.reused, panelClosed: !!res?.panelClosed, error: res?.error });
+    switchLog('OPEN_WINDOW reply', { ok: !!res?.ok, reused: !!res?.reused, panelClosed: !!res?.panelClosed, windowGone: !!res?.windowGone, error: res?.error });
+    if (focusOnly && res?.windowGone) {
+      // The window this document handed its transcript to has been closed by
+      // hand; nobody owns the tab. Take it back with the window's transcript
+      // (the recovery copy), which is what the user came here to continue.
+      el.popout.disabled = false;
+      showIssue('switch');
+      await reclaimAfterSwitch();
+      return;
+    }
     if (!res?.ok) throw new Error(`Could not open the window: ${res?.error || 'no reply'}`);
     if (res.reused && released) {
       // Focusing another view is not a transfer of this document's transcript.
@@ -1643,8 +1652,13 @@ window.addEventListener('pagehide', onPageHide);
  * moment BACK_TO_PANEL lands (the reliable path), and by focus as a fallback.
  */
 let reclaiming = false;
+let reclaimQueued = false;
 async function reclaimAfterSwitch({ viaFocus = false } = {}) {
-  if (IS_WINDOW || armed || !handedOff || reclaiming) return;
+  if (IS_WINDOW || armed || !handedOff) return;
+  // A second trigger while one reclaim is in flight (the worker's window-
+  // closed broadcast racing the focus fallback) must not be dropped: the
+  // in-flight one may have read the window record before it was cleared.
+  if (reclaiming) { reclaimQueued = true; return; }
   reclaiming = true;
   switchLog('survivor reclaim', {viaFocus});
   try {
@@ -1658,6 +1672,12 @@ async function reclaimAfterSwitch({ viaFocus = false } = {}) {
     const handoff = await claimHandoff({ waitMs: wait });
     switchLog('survivor claim', {waited: wait, ...handoff});
     if (handoff.failed) return;
+    // The window closed by hand, or a return arrived with no snapshot: the
+    // recovery copy is the window's last autosave, minutes of speech this
+    // document never heard. Adopt it exactly as a fresh panel's init() would.
+    // Without this the survivor showed its pre-pop-out text, and its next
+    // autosave overwrote the window's copy with that stale one.
+    let restored = false;
     if (!handoff.received) {
       if (handoffBlocked) return;
       // Focus can precede SWITCH_PENDING and the return snapshot. The old
@@ -1666,27 +1686,27 @@ async function reclaimAfterSwitch({ viaFocus = false } = {}) {
         const stored = await chrome.storage.session.get('popoutWindowId');
         if (stored.popoutWindowId != null) return;
       } catch (e) { return; } // Unknown ownership is not permission to capture.
+      restored = await restoreAutosave();
     }
 
-    // The window may still be releasing the tab; the same retry init() uses.
-    const cap = await armCapture({ retries: handoff.received ? 6 : 0 });
+    // The other document may still be releasing the tab, whether it handed
+    // the transcript back or was closed by hand; the same retry init() uses.
+    const cap = await armCapture({ retries: 6 });
     switchLog('survivor arm', cap);
-    if (handoff.received) {
-      // The transcript is back in this document whether or not the tab can be
-      // captured yet. It is the owner now, exactly like a fresh panel after
-      // init(): Record and Window must work, and a status that says "press
-      // Record" must not be muted by the hand-off flag or point at a disabled
-      // control.
-      handedOff = false;
-      el.record.disabled = false;
-      el.popout.disabled = false;
-      setPopoutLabel('window');
-    }
+    // The transcript is back in this document whether or not the tab can be
+    // captured yet, and with the window gone nobody else can own it. It is the
+    // owner now, exactly like a fresh panel after init(): Record and Window
+    // must work, and a status that says "press Record" must not be muted by
+    // the hand-off flag or point at a disabled control.
+    handedOff = false;
+    el.record.disabled = false;
+    el.popout.disabled = false;
+    setPopoutLabel('window');
     if (!cap.ok) {
-      if (viaFocus && !handoff.received) return; // nothing changed; stay inert
       // Same wording as a fresh panel: Chrome's raw activeTab message is not a
       // remedy the user can act on.
-      const carried = handoff.received ? 'Transcript restored. ' : '';
+      const carried = handoff.received ? 'Transcript restored. '
+        : restored ? 'Earlier transcript restored. ' : '';
       if (cap.needsInvocation) {
         setStatus(carried + 'Click the TabScribe toolbar icon on the tab you want to transcribe, then press Record.', !handoff.received);
       } else {
@@ -1694,10 +1714,6 @@ async function reclaimAfterSwitch({ viaFocus = false } = {}) {
       }
       return;
     }
-    handedOff = false; // this document owns the tab again
-    el.record.disabled = false;
-    el.popout.disabled = false;
-    setPopoutLabel('window');
 
     if (handoff.resume) {
       await start({ allowMic: true });
@@ -1705,20 +1721,26 @@ async function reclaimAfterSwitch({ viaFocus = false } = {}) {
     }
     setStatus(handoff.received
       ? 'Back in the sidebar. Press Record to continue transcribing.'
-      : 'Back in the side panel. Press Record to transcribe this tab.');
+      : restored
+        ? 'Earlier transcript restored. Press Record to continue, or Download to save it.'
+        : 'Back in the side panel. Press Record to transcribe this tab.');
   } finally {
     reclaiming = false;
+    if (reclaimQueued) {
+      reclaimQueued = false;
+      void reclaimAfterSwitch();
+    }
   }
 }
 
 if (!IS_WINDOW) {
-  // The reliable trigger: the worker tells every panel document when the window
-  // has handed off, whether or not this one ever receives focus.
+  // The reliable triggers: the worker tells every panel document when the
+  // window has handed off, and when the window was closed by hand, whether or
+  // not this one ever receives focus.
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg?.type === 'SWITCHED_BACK') reclaimAfterSwitch();
+    if (msg?.type === 'SWITCHED_BACK' || msg?.type === 'WINDOW_CLOSED') reclaimAfterSwitch();
   });
-  // Fallback for the case the message predates: the user closed the window by
-  // hand and came back to an inert panel.
+  // Fallback for a worker that predates those messages.
   window.addEventListener('focus', () => { reclaimAfterSwitch({ viaFocus: true }); });
 }
 

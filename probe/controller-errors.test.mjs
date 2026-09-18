@@ -67,7 +67,7 @@ function savedTranscript(text = 'Recovered meeting speech') {
   ] }, micText: null, savedText: '', at: 1000 };
 }
 
-function transferController({ respond, saved, extraFunctions = [] } = {}) {
+function transferController({ respond, saved, extraFunctions = [], getUserMedia } = {}) {
   const messages = [], writes = [], timers = new Map();
   const storage = saved ? { liveTranscript: structuredClone(saved) } : {};
   const el = Object.fromEntries(['record', 'popout', 'status', 'issues', 'transcript',
@@ -85,7 +85,7 @@ function transferController({ respond, saved, extraFunctions = [] } = {}) {
     Transcriber, TranscriptStore, MicTranscriber, el, Date: Clock,
     IS_WINDOW: false, SWITCH_HANDOFF_WAIT_MS: 20000, workerStale: false,
     receiverId: 'c72a4f31-f093-4814-b65c-9a5800303a64',
-    handedOff: true, switching: false, reclaiming: false, armed: false,
+    handedOff: true, switching: false, reclaiming: false, reclaimQueued: false, armed: false,
     armingPromise: null, graph: null, stream: null, transcriber: null, mic: null,
     targetTabId: 42, targetTitle: '', savedText: '', issues: new Map(),
     document: { createElement: element },
@@ -108,7 +108,7 @@ function transferController({ respond, saved, extraFunctions = [] } = {}) {
         async remove(key) { writes.push({ removed: key }); delete storage[key]; },
       } },
     },
-    navigator: { mediaDevices: { getUserMedia: async () => stream } },
+    navigator: { mediaDevices: { getUserMedia: getUserMedia || (async () => stream) } },
     buildAudioGraph: () => ({ track, cleanup: async () => {} }),
     refreshRecordTitle() {}, updateModeSummary() {}, switchLog() {}, setPopoutLabel() {},
     refreshMicPermission: async () => {}, onMicState() {}, onMicUpdate() {},
@@ -122,7 +122,7 @@ function transferController({ respond, saved, extraFunctions = [] } = {}) {
     },
   }, source.slice(source.indexOf("const AUTOSAVE_KEY ="), source.indexOf('function flushAutosave(')));
   return {
-    h, el, messages, writes, storage, timers, starts: () => starts,
+    h, el, messages, writes, storage, timers, stream, starts: () => starts,
     async tick(ms) {
       now += ms;
       for (const [id, timer] of timers) {
@@ -376,6 +376,124 @@ test('survivor focus before the new snapshot cannot steal capture from an existi
   assert.equal(c.h.handedOff, false);
   assert.equal(c.starts(), 1);
   assert.equal(c.el.transcript.textContent, 'Latest window speech');
+});
+
+// The user closed the pop-out window by hand. No hand-off was staged, but the
+// window's last autosave — minutes of speech this survivor never heard — is the
+// recovery copy. Taking the tab back must adopt that copy exactly as a fresh
+// panel would, and must not autosave this document's pre-pop-out text over it.
+for (const viaFocus of [false, true]) {
+  test(`a survivor reclaiming a closed window's tab adopts the window's newer transcript (viaFocus=${viaFocus})`, async () => {
+    const c = transferController({
+      saved: savedTranscript('Twenty minutes of speech in the window'),
+      respond: async message => {
+        if (message.type === 'CLAIM_HANDOFF') return { ok: true, handoffId: null };
+      },
+    });
+    // This document stopped hearing at the pop-out.
+    c.h.ensureTranscriber().store.restore(savedTranscript('Speech before the pop-out').snapshot);
+    c.h.render(c.h.transcriber.store);
+    c.h.autosaveTimer = null; // a survivor has no pending write: it stopped long ago
+    // The worker's windows.onRemoved already forgot the window.
+    await c.h.reclaimAfterSwitch({ viaFocus });
+    assert.equal(c.h.handedOff, false, 'the survivor owns the tab again');
+    assert.equal(c.el.record.disabled, false);
+    assert.equal(c.h.transcriber.store.toText(), 'Twenty minutes of speech in the window',
+      'the window\'s transcript must be on screen, not the pre-pop-out copy');
+    assert.equal(c.el.transcript.textContent, 'Twenty minutes of speech in the window');
+    assert.equal(c.h.autosaveTimer, null, 'adopting the copy must not schedule a write of it');
+    assert.equal(c.storage.liveTranscript.snapshot.segments[0].text, 'Twenty minutes of speech in the window',
+      'the recovery copy survives the reclaim');
+    assert.match(c.el.status.textContent, /restored/i);
+  });
+}
+
+// The window is gone, so nobody else can own the tab. Even when it cannot be
+// captured yet (the toolbar grant lapsed), the survivor must own the restored
+// transcript: Record usable, Window a real transfer of the restored text —
+// not an inert view whose only control stages an empty hand-off.
+test('a survivor whose closed window\'s tab cannot be captured yet still takes ownership', async () => {
+  const c = transferController({
+    saved: savedTranscript('Speech recorded in the window'),
+    respond: async message => {
+      if (message.type === 'CLAIM_HANDOFF') return { ok: true, handoffId: null };
+      if (message.type === 'GET_STREAM_ID') return {
+        ok: false, needsInvocation: true,
+        error: 'Extension has not been invoked for the current page (see activeTab permission).',
+      };
+    },
+  });
+  await c.h.reclaimAfterSwitch({ viaFocus: true });
+  assert.equal(c.h.transcriber.store.toText(), 'Speech recorded in the window');
+  assert.equal(c.h.handedOff, false, 'the window is gone; this document owns the transcript');
+  assert.equal(c.el.record.disabled, false, '"press Record" must be actionable');
+  assert.equal(c.el.popout.disabled, false);
+  assert.match(c.el.status.textContent, /Earlier transcript restored.*toolbar icon/);
+  assert.doesNotMatch(c.el.status.textContent, /activeTab permission/);
+  assert.deepEqual(c.writes, [], 'adopting the copy is not a write');
+  assert.equal(c.storage.liveTranscript.snapshot.segments[0].text, 'Speech recorded in the window');
+});
+
+// The window's capture may still be releasing when the survivor reacts, exactly
+// as on the return path: getUserMedia fails with "active stream" until the
+// other document lets go. One attempt would leave the survivor inert for good.
+test('a survivor retries capture while the closed window is still releasing the tab', async () => {
+  let attempts = 0;
+  const c = transferController({
+    saved: savedTranscript('Speech recorded in the window'),
+    respond: async message => {
+      if (message.type === 'CLAIM_HANDOFF') return { ok: true, handoffId: null };
+    },
+    getUserMedia: async () => {
+      attempts += 1;
+      if (attempts < 3) throw new Error('Cannot capture a tab with an active stream.');
+      return c.stream;
+    },
+  });
+  const reclaim = c.h.reclaimAfterSwitch();
+  // Each failed attempt arms its 400 ms retry timer only after its rejection
+  // lands: let the promise chain reach the timer before advancing the clock.
+  for (let i = 0; i < 12; i += 1) {
+    for (let j = 0; j < 8; j += 1) await new Promise(setImmediate);
+    await c.tick(400);
+  }
+  await reclaim;
+  assert.equal(attempts, 3);
+  assert.equal(c.h.handedOff, false);
+  assert.equal(c.h.armed, true);
+  assert.match(c.el.status.textContent, /Earlier transcript restored/);
+});
+
+// A second trigger arriving while one reclaim is in flight (the worker's
+// window-closed broadcast racing the focus fallback) must not be lost: the
+// in-flight one may have read the window as still present and given up.
+test('a reclaim requested during an in-flight reclaim runs once it finishes', async () => {
+  let claims = 0;
+  const c = transferController({
+    saved: savedTranscript('Speech recorded in the window'),
+    respond: async message => {
+      if (message.type === 'CLAIM_HANDOFF') {
+        claims += 1;
+        if (claims === 1) {
+          // Mid-flight: the worker's broadcast arrives. The record still says
+          // the window exists, so this first reclaim will give up.
+          void c.h.reclaimAfterSwitch();
+        }
+        return { ok: true, handoffId: null };
+      }
+      if (message.type === 'GET_SWITCH_PENDING' && claims === 1) {
+        // The worker clears the record right after the first reclaim read it.
+        delete c.storage.popoutWindowId;
+      }
+    },
+  });
+  c.storage.popoutWindowId = 2;
+  await c.h.reclaimAfterSwitch({ viaFocus: true });
+  for (let i = 0; i < 6; i += 1) await new Promise(setImmediate);
+  assert.equal(claims, 2, 'the queued reclaim ran after the first finished');
+  assert.equal(c.h.handedOff, false);
+  assert.equal(c.h.armed, true);
+  assert.equal(c.h.transcriber.store.toText(), 'Speech recorded in the window');
 });
 
 test('an announced handoff that never arrives leaves startup read-only with saved text', async () => {

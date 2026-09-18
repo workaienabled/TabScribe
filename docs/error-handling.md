@@ -32,8 +32,8 @@ page markup. Icon assets and the manifest do not have runtime error paths.
 ## Verified release check
 
 Chrome **151.0.7922.137**, isolated profiles on a private display: all **42
-browser suites** exited successfully, with **657 reported checks**, plus the
-control-row layout gate. All **255 Node tests** passed with no failures,
+browser suites** exited successfully, with **663 reported checks**, plus the
+control-row layout gate. All **266 Node tests** passed with no failures,
 cancellations, or skips. Known-audio accuracy unchanged at 96.3% and 100.0%.
 `probe/count_run.py` derives these numbers from the run's own artifacts and
 fails if a registered suite did not run or reported fewer passes than checks.
@@ -49,6 +49,20 @@ listener for the permission page's report, a lost final autosave on close,
 retried recognizer errors shown as terminal, and a preference-load fallback
 that the next write persisted. Each was reproduced as a failing test before
 the fix. The verdict is at `artifacts/uiux/review-error-handling-pass2.json`.
+
+The review's one uncertain item was then confirmed in real Chrome: when the
+user closes the pop-out window by hand and a surviving panel document sits
+behind it, no hand-off is staged, so the survivor stayed inert on "Moved to its
+own window" with its pre-pop-out text (69 words on screen against the window's
+90), and its next autosave would have overwritten the window's recovery copy.
+The survivor now adopts the recovery copy and takes the tab back, as a fresh
+panel's `init()` does; the worker broadcasts `WINDOW_CLOSED` after clearing the
+window record so the survivor does not depend on a focus event that may arrive
+first or never; a reclaim requested mid-flight is queued rather than dropped;
+and a focus-only Window press for a window that is gone is refused by the
+worker (`windowGone`) instead of creating a new receiver whose empty hand-off
+would acknowledge over the recovery copy. `probe/switch_survivor_test.py`
+covers the closed-by-hand case end to end.
 
 Local evidence: `artifacts/uiux/regression-results.json`, per-suite logs, and
 `artifacts/uiux/review-error-handling-pass2.json`. These are generated

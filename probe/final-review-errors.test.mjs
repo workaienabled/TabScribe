@@ -77,7 +77,7 @@ function controller(t, { respond = () => undefined, availability = async () => '
     Transcriber, TranscriptStore, MicTranscriber, MIC_MESSAGES, stopStream, AbortController,
     el, issues: new Map(), document: { createElement: element }, console: { warn() {} },
     IS_WINDOW: false, PROTOCOL_VERSION: 4, receiverId: 'final-review-receiver', workerStale: false,
-    handedOff: false, handoffBlocked: false, switching: false, reclaiming: false,
+    handedOff: false, handoffBlocked: false, switching: false, reclaiming: false, reclaimQueued: false,
     activeStart: null, stopInProgress: false, armed: false, armingPromise: null,
     transcriber: null, mic: null, graph: null, stream: null, micGranted: false, micBlocked: false,
     autosaveTimer: null, autosaveQueue: Promise.resolve(), autosaveBlocked: false,
@@ -656,6 +656,39 @@ for (const failure of ['rejected', 'stale worker', 'GET_HOST_WINDOW failed']) {
     assert.equal(c.h.transcriber.store.toText(), 'Handed to the window');
   });
 }
+
+// The inert panel presses Window, but the window was closed by hand. The worker
+// says so instead of creating a new receiver (which would stage an empty
+// hand-off over the window's transcript). The panel must take the tab back with
+// the window's last autosave, not report a focus failure.
+test('Window pressed after the pop-out was closed by hand takes the tab back with the window\'s transcript', async t => {
+  let handedOver = false;
+  const c = controller(t, { respond: message => {
+    if (message.type === 'OPEN_WINDOW' && !handedOver) return { ok: true, reused: false, panelClosed: false };
+    if (message.type === 'OPEN_WINDOW') {
+      assert.equal(message.focusOnly, true, 'an inert panel only asks to focus');
+      assert.equal(message.snapshot, undefined, 'and sends no text');
+      return { ok: false, safeToResume: false, windowGone: true, error: 'The TabScribe window is no longer open.' };
+    }
+    if (message.type === 'CLAIM_HANDOFF') return { ok: true, handoffId: null };
+  } });
+  assert.equal((await c.h.start()).ok, true);
+  c.h.transcriber.store.update(0, 'Before the pop-out', true, 0);
+  await c.h.popOut();
+  assert.equal(c.h.handedOff, true);
+  handedOver = true;
+  delete c.storage.popoutWindowId;
+  c.storage.liveTranscript = snapshot('Everything the window heard');
+  await c.h.popOut();
+  assert.equal(c.h.handedOff, false, 'the panel owns the tab again');
+  assert.equal(c.h.handoffBlocked, false);
+  assert.equal(c.h.transcriber.store.toText(), 'Everything the window heard');
+  assert.equal(c.el.record.disabled, false);
+  assert.equal(c.el.popout.disabled, false);
+  assert.equal(c.h.issues.has('switch'), false, 'nothing failed');
+  assert.match(c.el.status.textContent, /Earlier transcript restored/);
+  assert.equal(c.storage.liveTranscript.snapshot.segments[0].text, 'Everything the window heard');
+});
 
 // Record was pressed and Start is still preparing (model download, arming).
 // The user sees recording; the transcriber may not exist yet. A switch now must
