@@ -46,6 +46,7 @@ function controller(t, { respond = () => undefined, availability = async () => '
     'requestMicStream', 'attachMic', 'disableMic', 'onMicState', 'onMicUpdate', 'setMicHint',
     'setMicIndicator', 'refreshMicPermission', 'langName', 'showModelPanel', 'hideModelPanel',
     'startModelTimer', 'stopModelTimer', 'onModelProgress',
+    'recordingInProgress', 'explainReadOnlyView',
   ];
   const functions = names.map(name => {
     const match = source.match(new RegExp(`^(?:async )?function ${name}\\([^]*?^}`, 'm'));
@@ -221,6 +222,10 @@ for (const direction of ['OPEN_WINDOW', 'BACK_TO_PANEL']) {
     assert.equal(c.h.stopInProgress, true);
     if (direction === 'OPEN_WINDOW') await c.h.popOut();
     else await c.h.backToSidebar(Promise.resolve({ ok: true }));
+    // The user pressed Stop first. Stop is still flushing, so `running` has not
+    // dropped yet, but the receiver must not be asked to resume a stopped meeting.
+    assert.equal(c.messages.find(m => m.type === direction).resume, false,
+      'a switch during Stop must not resume recording in the receiver');
     assert.equal(c.el.record.disabled, true);
     assert.equal(c.el.dot.dataset.state, 'error');
     const pausedStatus = c.el.status.textContent;
@@ -327,5 +332,290 @@ for (const target of ['existing', 'missing', 'focus rejected']) {
     assert.match(c.h.issues.get('switch'), /Copy or Download/);
     assert.match(c.h.issues.get('switch'), /toolbar/);
     assert.equal(c.el.popout.disabled, false);
+  });
+}
+
+// Chrome ends a continuous session and the Transcriber schedules a restart. For
+// that gap the recognizer is null and running is false, yet the user still sees
+// Record pressed. A view switch here must carry the recording over and must not
+// leave a timer that restarts recognition inside the released document.
+for (const direction of ['OPEN_WINDOW', 'BACK_TO_PANEL']) {
+  test(`a switch during the recognizer's restart gap keeps recording (${direction})`, async t => {
+    const c = controller(t, { respond: message => {
+      if (message.type === 'OPEN_WINDOW') return { ok: true, reused: false, panelClosed: true };
+      if (message.type === 'BACK_TO_PANEL') return { ok: true, tabId: 42 };
+    } });
+    assert.equal((await c.h.start()).ok, true);
+    c.instances[0].onend();
+    assert.equal(c.h.transcriber.running, false);
+    assert.equal(c.h.transcriber.recognition, null);
+    assert.equal(c.el.record.getAttribute('aria-pressed'), 'true');
+    if (direction === 'OPEN_WINDOW') await c.h.popOut();
+    else await c.h.backToSidebar(Promise.resolve({ ok: true }));
+    assert.equal(c.h.handedOff, true);
+    for (const type of direction === 'OPEN_WINDOW' ? ['OPEN_WINDOW'] : ['SWITCH_PENDING', 'BACK_TO_PANEL']) {
+      assert.equal(c.messages.find(m => m.type === type).resume, true,
+        `${type} must ask the receiver to resume what the user saw as recording`);
+    }
+    const status = c.el.status.textContent;
+    await new Promise(resolve => setTimeout(resolve, 600));
+    assert.equal(c.instances.length, 1, 'the released document must not restart recognition');
+    assert.equal(c.h.transcriber.running, false);
+    assert.equal(c.el.status.textContent, status, 'a late restart must not rewrite the hand-off message');
+    assert.notEqual(c.el.dot.dataset.state, 'listening');
+  });
+}
+
+// A real microphone: getUserMedia resolves, the audio graph builds, and the
+// permission state is whatever the test says it is right now.
+function microphoneBrowser(t, { permission = () => 'granted' } = {}) {
+  const node = () => ({ gain: {}, offset: {}, connect() {}, disconnect() {}, start() {}, stop() {} });
+  const liveStream = () => {
+    const track = { readyState: 'live', stop() { this.readyState = 'ended'; }, addEventListener() {}, removeEventListener() {} };
+    return { getTracks: () => [track], getAudioTracks: () => [track] };
+  };
+  class AudioContext {
+    constructor() { this.sampleRate = 100; this.destination = {}; }
+    createMediaStreamSource() { return node(); }
+    createMediaStreamDestination() { return { ...node(), stream: liveStream() }; }
+    createGain() { return node(); } createConstantSource() { return node(); }
+    createBuffer(c, n) { return { getChannelData: () => new Float32Array(n) }; }
+    createBufferSource() { return node(); }
+    async close() {}
+  }
+  for (const [name, value] of Object.entries({ AudioContext, navigator: {
+    mediaDevices: { getUserMedia: async () => liveStream() },
+    permissions: { query: async () => ({ state: permission() }) },
+  } })) {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, name);
+    Object.defineProperty(globalThis, name, { configurable: true, value });
+    t.after(() => previous ? Object.defineProperty(globalThis, name, previous) : delete globalThis[name]);
+  }
+}
+
+test('the microphone still attaches during the recognizer\'s restart gap', async t => {
+  microphoneBrowser(t);
+  const c = controller(t);
+  c.el.includeMic.checked = true;
+  await c.h.refreshMicPermission();
+  assert.equal((await c.h.start()).ok, true);
+  c.instances[0].onend();
+  assert.equal(c.h.transcriber.recognition, null, 'the gap: no recognizer until the scheduled restart');
+  assert.equal(c.el.record.getAttribute('aria-pressed'), 'true');
+  await c.h.attachMic(c.h.requestMicStream(), 'en-US', true);
+  assert.equal(c.h.mic?.running, true, 'a scheduled restart is not a stopped meeting');
+  assert.match(c.el.micHint.textContent, /being transcribed/);
+  assert.equal(c.h.micBlocked, false);
+});
+
+// A receiver that waited for an announced transfer and then failed must not be
+// left saying "Bringing the transcript back…" next to its failure alert.
+test('a failed receive replaces the waiting status with the paused state', async t => {
+  const c = controller(t, { respond: message => {
+    if (message.type === 'CLAIM_HANDOFF') return { ok: false, error: 'Claim storage rejected' };
+  } });
+  c.h.setStatus('Bringing the transcript back…');
+  const handoff = await c.h.claimHandoff({ waitMs: 20000 });
+  assert.equal(handoff.failed, true);
+  assert.doesNotMatch(c.el.status.textContent, /Bringing/);
+  assert.match(c.el.status.textContent, /paused in this view/i);
+  assert.equal(c.el.dot.dataset.state, 'error');
+  assert.match(c.h.issues.get('switch'), /Claim storage rejected/);
+});
+
+// The surviving sidebar reclaiming after the window closed gets the same
+// remedy wording as a fresh panel when Chrome wants a new toolbar click.
+test('survivor reclaim explains a missing invocation like a fresh panel does', async t => {
+  let returned = false;
+  const c = controller(t, { respond: message => {
+    if (message.type === 'OPEN_WINDOW') return { ok: true, reused: false, panelClosed: false };
+    if (message.type === 'CLAIM_HANDOFF') return {
+      ok: true, handoffId: 'returned', resume: false, ...snapshot('Text from the window'),
+    };
+    if (message.type === 'ACK_HANDOFF') return { ok: true };
+    // The activeTab grant from the original toolbar click is gone by the time
+    // the window closes; Chrome wants a new click.
+    if (message.type === 'GET_STREAM_ID' && returned) return {
+      ok: false, needsInvocation: true,
+      error: 'Extension has not been invoked for the current page (see activeTab permission). Chrome pages cannot be captured.',
+    };
+  } });
+  assert.equal((await c.h.start()).ok, true);
+  await c.h.popOut();
+  returned = true;
+  await c.h.reclaimAfterSwitch();
+  assert.equal(c.h.transcriber.store.toText(), 'Text from the window', 'the transcript came back');
+  assert.match(c.el.status.textContent, /Transcript restored.*Click the TabScribe toolbar icon/);
+  assert.doesNotMatch(c.el.status.textContent, /activeTab permission/);
+  assert.equal(c.h.handedOff, false, 'the transcript is owned here now');
+  assert.equal(c.el.record.disabled, false, '"press Record" must be actionable');
+  assert.equal(c.el.popout.disabled, false);
+  assert.equal(await c.h.flushAutosave(), true, 'the owner persists its copy');
+});
+
+/* ------------------------------------------------ independent review findings */
+
+// A window that failed to receive a transfer is read-only (handoffBlocked). Its
+// Sidebar button must not stage its stale copy, announce a switch the sidebar
+// would wait for, or clear the block and start autosaving over the source's
+// newer copy. popOut() already guards this; backToSidebar() must too.
+test('Sidebar in a failed-receiver window stays read-only and never overwrites the newer copy', async t => {
+  const c = controller(t, { respond: message => {
+    if (message.type === 'CLAIM_HANDOFF') return {
+      ok: true, handoffId: 'failed-window', ...snapshot('stale receiver copy'),
+    };
+    if (message.type === 'ACK_HANDOFF') return { ok: false, error: 'ACK storage rejected' };
+  } });
+  c.h.IS_WINDOW = true;
+  assert.equal((await c.h.claimHandoff()).failed, true);
+  assert.equal(c.h.handoffBlocked, true);
+  // The source resumed after the worker cancelled the transfer and kept recording.
+  c.storage.liveTranscript = snapshot('NEWER speech from the resumed source');
+  c.messages.length = 0;
+  await c.h.backToSidebar(Promise.resolve({ ok: false, error: 'no tab to attach to' }));
+  assert.equal(c.h.handoffBlocked, true, 'a failed receiver cannot clear its own block');
+  assert.deepEqual(c.messages.map(m => m.type), [], 'nothing announced, nothing staged');
+  assert.equal(c.el.record.disabled, true);
+  assert.equal(c.el.popout.disabled, false, 'the control is usable again');
+  assert.equal(await c.h.flushAutosave(), false);
+  assert.equal(c.h.autosaveTimer, null, 'no autosave scheduled');
+  await new Promise(resolve => setTimeout(resolve, 1300));
+  assert.equal(c.storage.liveTranscript.snapshot.segments[0].text, 'NEWER speech from the resumed source');
+  assert.match(c.h.issues.get('switch'), /Copy or Download/);
+});
+
+// An inert, handed-off panel presses Window only to focus the pop-out. If that
+// focus fails, nothing about ownership changed: the window still records. The
+// panel must say so and keep its one control usable, not declare an
+// unconfirmed transfer and disable itself for good.
+for (const failure of ['rejected', 'stale worker', 'GET_HOST_WINDOW failed']) {
+  test(`a failed focus from an inert panel is not an unconfirmed transfer (${failure})`, async t => {
+    let handedOver = false;
+    const c = controller(t, { respond: message => {
+      if (message.type === 'GET_HOST_WINDOW' && handedOver && failure === 'stale worker') return { ok: true, windowId: 5 };
+      if (message.type === 'GET_HOST_WINDOW' && handedOver && failure === 'GET_HOST_WINDOW failed') return { ok: false, error: 'No browser window', workerVersion: 4 };
+      if (message.type === 'OPEN_WINDOW' && !handedOver) return { ok: true, reused: false, panelClosed: false };
+      if (message.type === 'OPEN_WINDOW') return { ok: false, safeToResume: true, error: 'focus unavailable' };
+    } });
+    assert.equal((await c.h.start()).ok, true);
+    c.h.transcriber.store.update(0, 'Handed to the window', true, 0);
+    await c.h.popOut();
+    assert.equal(c.h.handedOff, true);
+    handedOver = true;
+    await c.h.popOut();
+    assert.equal(c.h.handedOff, true, 'the window still owns the recording');
+    assert.equal(c.h.handoffBlocked, false, 'a focus failure is not an unconfirmed transfer');
+    assert.equal(c.el.popout.disabled, false, 'the only remaining control must stay usable');
+    assert.doesNotMatch(c.el.status.textContent, /could not be confirmed/);
+    assert.match(c.h.issues.get('switch'), /focus/i);
+    assert.equal(c.messages.some(m => m.type === 'GET_STREAM_ID' && c.messages.indexOf(m) > 2), false,
+      'an inert panel must not re-arm capture');
+    assert.equal(c.h.transcriber.store.toText(), 'Handed to the window');
+  });
+}
+
+// Record was pressed and Start is still preparing (model download, arming).
+// The user sees recording; the transcriber may not exist yet. A switch now must
+// carry `resume` so the receiver continues, and the released document must not
+// keep a live download panel ticking behind the window.
+for (const direction of ['OPEN_WINDOW', 'BACK_TO_PANEL']) {
+  test(`a switch while Start is still preparing resumes in the receiver (${direction})`, async t => {
+    const installation = deferred();
+    const c = controller(t, {
+      availability: async () => 'downloadable',
+      install: () => installation.promise,
+      respond: message => {
+        if (message.type === 'OPEN_WINDOW') return { ok: true, reused: false, panelClosed: true };
+        if (message.type === 'BACK_TO_PANEL') return { ok: true, tabId: 42 };
+      },
+    });
+    c.el.localOnly.checked = true;
+    const starting = c.h.start({ gesture: true });
+    await settle();
+    assert.equal(c.el.record.getAttribute('aria-pressed'), 'true');
+    assert.equal(c.el.modelPanel.hidden, false, 'the download notice is up');
+    assert.notEqual(c.h.modelTimer, null);
+    if (direction === 'OPEN_WINDOW') await c.h.popOut();
+    else await c.h.backToSidebar(Promise.resolve({ ok: true }));
+    assert.equal((await starting).cancelled, true);
+    assert.equal(c.h.handedOff, true);
+    assert.equal(c.messages.find(m => m.type === direction).resume, true,
+      'the receiver must continue what the user started');
+    assert.equal(c.h.modelTimer, null, 'the released document must not keep counting');
+    assert.equal(c.el.modelPanel.hidden, true);
+    installation.resolve(true);
+    await settle();
+    assert.equal(c.instances.length, 0, 'a late install result must not start recognition here');
+  });
+}
+
+// Chrome reports 'network' or 'audio-capture' and ends the session; the
+// Transcriber retries on its own. Showing "press Record" for that moment sends
+// the user to STOP a session that is about to recover. The remedy belongs to
+// the terminal 'stopped' notification, which only arrives if retries run out.
+for (const code of ['network', 'audio-capture']) {
+  test(`a retried recognizer error (${code}) is not shown as a terminal failure`, async t => {
+    const c = controller(t);
+    assert.equal((await c.h.start()).ok, true);
+    const rec = c.instances[0];
+    rec.onerror({ error: code, message: 'transient' });
+    assert.notEqual(c.el.dot.dataset.state, 'error', 'still recording as far as the user is concerned');
+    assert.equal(c.el.status.classList.contains('error'), false);
+    assert.doesNotMatch(c.el.status.textContent, /press Record/i);
+    assert.match(c.el.status.textContent, new RegExp(`${code}.*reconnect|reconnect.*${code}`, 'i'));
+    rec.onend();
+    assert.match(c.el.status.textContent, /Reconnecting/);
+    await new Promise(resolve => setTimeout(resolve, 400));
+    assert.equal(c.instances.length, 2, 'the transcriber restarted on its own');
+    c.instances[1].onstart();
+    assert.match(c.el.status.textContent, /Listening/);
+    assert.equal(c.el.record.getAttribute('aria-pressed'), 'true');
+  });
+}
+
+test('a fatal recognizer error keeps its remedy in the status line', async t => {
+  const c = controller(t);
+  assert.equal((await c.h.start()).ok, true);
+  c.instances[0].onerror({ error: 'not-allowed', message: 'policy' });
+  assert.match(c.el.status.textContent, /Chrome denied speech recognition.*press Record/i);
+  assert.equal(c.el.dot.dataset.state, 'error');
+  c.instances[0].onend();
+  assert.match(c.el.status.textContent, /Chrome denied speech recognition/);
+  assert.equal(c.el.record.getAttribute('aria-pressed'), 'false');
+});
+
+test('a retried error that exhausts its budget ends with the remedy', async t => {
+  const c = controller(t);
+  assert.equal((await c.h.start()).ok, true);
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const rec = c.instances.at(-1);
+    rec.onerror({ error: 'network', message: 'down' });
+    rec.onend();
+    await new Promise(resolve => setTimeout(resolve, 250 * 2 ** attempt + 50));
+  }
+  assert.match(c.el.status.textContent, /connection failed.*press Record/i);
+  assert.equal(c.el.dot.dataset.state, 'error');
+  assert.equal(c.el.record.getAttribute('aria-pressed'), 'false');
+});
+
+// The focus-only failure branch applies to a document that had ALREADY handed
+// off. A live panel whose pop-out fails before anything was released must go
+// through the ordinary recovery: it still owns the recording.
+for (const failure of ['GET_HOST_WINDOW failed', 'stale worker']) {
+  test(`a live panel whose pop-out fails before release keeps recording (${failure})`, async t => {
+    const c = controller(t, { respond: message => {
+      if (message.type === 'GET_HOST_WINDOW') {
+        return failure === 'stale worker' ? { ok: true, windowId: 5 } : { ok: false, error: 'No browser window', workerVersion: 4 };
+      }
+    } });
+    assert.equal((await c.h.start()).ok, true);
+    await c.h.popOut();
+    assert.equal(c.h.handedOff, false, 'nothing was handed off');
+    assert.equal(c.h.transcriber.active, true, 'still recording here');
+    assert.equal(c.el.record.getAttribute('aria-pressed'), 'true');
+    assert.equal(c.el.popout.disabled, false);
+    assert.doesNotMatch(c.h.issues.get('switch'), /window still holds/i);
+    assert.match(c.h.issues.get('switch'), /remains in this view/);
+    // The stale-worker message itself is covered by stale_worker_test.py in a real Chrome.
   });
 }

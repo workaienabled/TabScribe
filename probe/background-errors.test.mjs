@@ -504,3 +504,23 @@ for (const type of ['OPEN_WINDOW', 'BACK_TO_PANEL']) {
     assert.ok(!w.calls.some((c) => c.name === 'windows.remove'));
   });
 }
+
+// The source is told safeToResume:false from the moment a transfer might exist.
+// When staging itself refuses because an earlier transfer is still pending,
+// nothing was written for THIS request. Still, the pending one may be the
+// source's own earlier attempt that a receiver could accept any moment, so
+// "resume capture" would be wrong. The worker says so in words instead.
+for (const type of ['OPEN_WINDOW', 'BACK_TO_PANEL']) {
+  test(`${type} refused because another transfer is pending explains itself and stays conservative`, async () => {
+    const pending = { ...transfer, id: 'still-pending', state: 'pending', expiresAt: Date.now() + 10000, owner: null };
+    const w = worker({ session: { handoffSnapshot: pending, targetTabId: 7 } });
+    const reply = await w.request({ type, ...transfer, sourceWindowId: 1 });
+    assert.equal(reply.ok, false);
+    assert.equal(reply.safeToResume, false);
+    assert.match(reply.error, /Another transcript transfer is still pending/);
+    assert.deepEqual(w.data.handoffSnapshot, pending, 'the pending transfer is untouched');
+    if (type === 'OPEN_WINDOW') {
+      assert.ok(w.calls.some((c) => c.name === 'windows.remove' && c.args[0] === 2), 'the blank popup is discarded');
+    }
+  });
+}

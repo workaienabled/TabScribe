@@ -119,7 +119,13 @@ def main():
             return checks.finish()
 
         psid = chrome.attach(panel['targetId'])
-        chrome.wait_for_js(psid, "!!document.getElementById('recordBtn')", timeout=30)
+        # Wait for init() to FINISH, not merely for the DOM to exist. init()
+        # ends by setting the status line. Seeding a hand-off while the old
+        # document's own claim is still in flight lets that document claim it
+        # and then die in the reload below before it can acknowledge — leaving
+        # a transfer owned by a dead nonce that the reloaded panel correctly
+        # refuses. Observed once in three runs under full-suite load.
+        chrome.wait_for_js(psid, "!!document.getElementById('recordBtn') && document.getElementById('status').textContent.length > 0", timeout=30)
 
         # In panel mode the control offers the window.
         in_panel = chrome.evaluate(psid, """({
@@ -153,6 +159,7 @@ def main():
             chrome.wait_for_js(psid, "document.querySelectorAll('.seg').length === 1 && document.getElementById('status').textContent.length > 0", timeout=20)
         except RuntimeError:
             print('Restore diagnostics:', chrome.evaluate(psid, "({status:document.getElementById('status').textContent,issues:document.getElementById('issues').innerText,rows:document.querySelectorAll('.seg').length})"), flush=True)
+            print('Session storage:', chrome.evaluate(psid, "chrome.storage.session.get(['handoffSnapshot','liveTranscript','switchLog','switchPending','popoutWindowId'])", await_promise=True), flush=True)
             raise
 
         # --- panel -> window --------------------------------------------------

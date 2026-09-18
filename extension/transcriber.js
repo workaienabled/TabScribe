@@ -264,6 +264,18 @@ export class Transcriber {
     this.options = { lang: 'en-US', processLocally: true };
   }
 
+  /**
+   * A session exists and has not been asked to stop: live, still starting, or
+   * waiting for its scheduled restart. Chrome ends a continuous session every
+   * few minutes and the restart is delayed, so `running` and `recognition` are
+   * both false for that gap while the user still sees Record pressed. And after
+   * stop() begins, `running` stays true through the flush although the meeting
+   * is over. Callers deciding whether recognition is in progress read this.
+   */
+  get active() {
+    return !this.stopping && !!(this.running || this.recognition || this.retryTimer);
+  }
+
   static async availability(lang = 'en-US', processLocally = true) {
     const SR = getSpeechRecognition();
     if (!SR || !SR.available) return 'unsupported';
@@ -541,7 +553,7 @@ export class Transcriber {
    */
   reset() {
     this.store.clear();
-    const wasActive = this.running || this.recognition || this.retryTimer;
+    const wasActive = this.active;
     const track = this.track;
     this._detach(this.recognition, true);
     clearTimeout(this.retryTimer);

@@ -334,7 +334,7 @@ function refreshRecordTitle() {
 }
 
 function updateModeSummary() {
-  const active = !!transcriber?.running;
+  const active = !!transcriber?.active;
   const local = active ? transcriber.options.processLocally : el.localOnly.checked;
   const lang = active ? transcriber.options.lang : el.lang.value;
   // Cloud recognition uploads audio. The badge that said so lived in the removed
@@ -1031,8 +1031,18 @@ function ensureTranscriber() {
       }
     },
     onError: (code, message) => {
-      setState('error');
-      setStatus(fatalRecognitionMessage(code, message), true);
+      // Only codes the Transcriber treats as terminal get the remedy now. For
+      // the rest ('network', 'audio-capture', …) onend follows and the
+      // Transcriber retries on its own; telling the user to "press Record"
+      // here sends them to stop a session that is about to recover. If the
+      // retries run out, the 'stopped' notification above carries the remedy.
+      if (['not-allowed', 'service-not-allowed', 'language-not-supported', 'start-timeout',
+           'restart-failed'].includes(code)) {
+        setState('error');
+        setStatus(fatalRecognitionMessage(code, message), true);
+        return;
+      }
+      setStatus(`Recognition error (${code}${message ? `: ${message}` : ''}). Reconnecting…`);
     },
   });
   return transcriber;
@@ -1102,15 +1112,32 @@ function setPopoutLabel(which) {
  */
 let switching = false;
 
+/**
+ * What the user sees as recording, and what the receiver must therefore
+ * continue: a live or restarting recognizer, OR a Start still preparing
+ * (arming, first-run model download). Stop in progress is not recording.
+ */
+function recordingInProgress() {
+  return !stopInProgress && (!!transcriber?.active
+    || (!!activeStart && !activeStart.signal.aborted && el.record.getAttribute('aria-pressed') === 'true'));
+}
+
 async function releaseForTransfer() {
   switching = true;
   activeStart?.abort();
   activeStart = null;
+  // A Start abandoned mid-download returns through its `!current()` branch,
+  // which skips its own cleanup; an inert document must not keep a download
+  // notice counting elapsed time behind the window.
+  hideModelPanel();
   clearTimeout(autosaveTimer);
   autosaveTimer = null;
   await autosaveQueue;
   if (armingPromise) await armingPromise;
-  if (transcriber?.recognition) await transcriber.stop({ flushMs: 400 });
+  // `active`, not `recognition`: between Chrome ending a session and the
+  // scheduled restart there is no recognizer, but a retry timer that would fire
+  // inside this document after it has released the tab.
+  if (transcriber?.active) await transcriber.stop({ flushMs: 400 });
   if (mic) await mic.stop({ flushMs: 400 });
   const payload = {
     snapshot: transcriber?.store.serialize() || new TranscriptStore().serialize(),
@@ -1120,6 +1147,16 @@ async function releaseForTransfer() {
   await teardown();
   el.record.disabled = true;
   return payload;
+}
+
+/**
+ * A view that failed to receive a transfer holds only a recovery snapshot
+ * (handoffBlocked). It must never stage that copy as a new transfer, announce a
+ * switch the other view would wait for, or clear its own block and start
+ * autosaving over the source's newer copy. Both switch controls route here.
+ */
+function explainReadOnlyView(action) {
+  showIssue('switch', `Could not ${action}. Recording remains paused in this view. Copy or Download its transcript. Check the other view and retry the switch there; if none is open, close this view and reopen TabScribe from the toolbar icon on the meeting tab.`);
 }
 
 async function recoverTransfer(wasRunning, message, released, safeToResume = false) {
@@ -1154,7 +1191,16 @@ async function recoverTransfer(wasRunning, message, released, safeToResume = fal
 
 async function backToSidebar(pendingOpen) {
   el.popout.disabled = true;
-  const wasRunning = !!transcriber?.running;
+  if (handoffBlocked) {
+    // Same guard as popOut(): this window holds a recovery snapshot it does not
+    // own. The sidebar request already went out inside the click (it needs the
+    // gesture); let it settle without acting on it, and stage nothing.
+    try { await pendingOpen; } catch (e) { /* not this view's concern */ }
+    explainReadOnlyView('return this transcript to the sidebar');
+    el.popout.disabled = false;
+    return;
+  }
+  const wasRunning = recordingInProgress();
   let released = false;
   let safeToResume = !handedOff;
   await switchLogReset(`backToSidebar running=${wasRunning}`);
@@ -1224,13 +1270,17 @@ async function popOut() {
       }
       await chrome.windows.update(popoutWindowId, { focused: true, drawAttention: true });
     } catch (e) {
-      showIssue('switch', `Could not focus the TabScribe window: ${e?.message || e}. Recording remains paused in this view. Copy or Download its transcript. Check the other view and retry the switch there; if none is open, close this view and reopen TabScribe from the toolbar icon on the meeting tab.`);
+      explainReadOnlyView(`focus the TabScribe window: ${e?.message || e}`);
     } finally {
       el.popout.disabled = false;
     }
     return;
   }
-  const wasRunning = !!transcriber?.running;
+  // What the user sees as recording, including the restart gap after Chrome
+  // ends a session and a Start still preparing: the receiver must resume it.
+  const wasRunning = recordingInProgress();
+  // Already handed off: this press only asks for the window to be focused.
+  const focusOnly = handedOff;
   let released = false;
   let safeToResume = !handedOff;
   await switchLogReset(`popOut running=${wasRunning}`);
@@ -1278,6 +1328,16 @@ async function popOut() {
     el.popout.disabled = false;
     setPopoutLabel('focus');
   } catch (e) {
+    if (focusOnly) {
+      // This document had already handed its transcript over and only asked
+      // for the window to be focused. Nothing about ownership changed: the
+      // window still records. Say what failed and keep this control usable;
+      // "unconfirmed transfer" would be false and would disable it for good.
+      showIssue('switch', `Could not focus the TabScribe window: ${e?.message || e}. The window still holds the recording. Check it directly; if it is gone, click the TabScribe toolbar icon on the meeting tab.`);
+      el.popout.disabled = false;
+      if (workerStale) setStatus(STALE_WORKER_MESSAGE, true);
+      return;
+    }
     await recoverTransfer(wasRunning, String(e?.message || e), released, safeToResume);
     if (workerStale) setStatus(STALE_WORKER_MESSAGE, true);
   }
@@ -1322,6 +1382,11 @@ async function claimHandoff({ waitMs = 0 } = {}) {
       // capture independently. The source will resume or show its own failure.
       handoffBlocked = true;
       el.record.disabled = true;
+      // The status may still read "Bringing the transcript back…" from the
+      // announced wait; that promise is now broken and must not stand beside
+      // the alert that says so.
+      setState('error');
+      setStatus('Recording paused in this view. The transcript transfer failed.', true);
       showIssue('switch', `Could not receive the transcript: ${e?.message || e}. Recording is paused in this view. Copy or Download any recovered text. If another TabScribe view is open, check it and retry the switch there; otherwise close and reopen TabScribe from the toolbar icon on the meeting tab.`);
       return { received: false, resume: false, failed: true, restored };
     }
@@ -1472,8 +1537,9 @@ async function start({ gesture = false, allowMic = false } = {}) {
     // The recognizer may already be running against the graph teardown is about
     // to destroy (transcriber.start() succeeded, then something after it threw).
     // Leaving it attached to a dead track produces an endless restart loop that
-    // no longer has any audio to hear.
-    if (transcriber?.running) {
+    // no longer has any audio to hear. `active` also covers a restart already
+    // scheduled, which `running` would miss.
+    if (transcriber?.active) {
       try { await transcriber.stop({ flushMs: 0 }); } catch (e2) { /* best effort */ }
     }
     await teardown();
@@ -1584,9 +1650,27 @@ async function reclaimAfterSwitch({ viaFocus = false } = {}) {
     // The window may still be releasing the tab; the same retry init() uses.
     const cap = await armCapture({ retries: handoff.received ? 6 : 0 });
     switchLog('survivor arm', cap);
+    if (handoff.received) {
+      // The transcript is back in this document whether or not the tab can be
+      // captured yet. It is the owner now, exactly like a fresh panel after
+      // init(): Record and Window must work, and a status that says "press
+      // Record" must not be muted by the hand-off flag or point at a disabled
+      // control.
+      handedOff = false;
+      el.record.disabled = false;
+      el.popout.disabled = false;
+      setPopoutLabel('window');
+    }
     if (!cap.ok) {
       if (viaFocus && !handoff.received) return; // nothing changed; stay inert
-      setStatus(cap.error || 'Could not take this tab back.', true);
+      // Same wording as a fresh panel: Chrome's raw activeTab message is not a
+      // remedy the user can act on.
+      const carried = handoff.received ? 'Transcript restored. ' : '';
+      if (cap.needsInvocation) {
+        setStatus(carried + 'Click the TabScribe toolbar icon on the tab you want to transcribe, then press Record.', !handoff.received);
+      } else {
+        setStatus(carried + (cap.error || 'Could not take this tab back.'), true);
+      }
       return;
     }
     handedOff = false; // this document owns the tab again
@@ -1665,7 +1749,10 @@ async function attachMic(pending, lang, processLocally) {
     if (res.reason !== 'cancelled') disableMic(res.reason, res.error);
     return;
   }
-  if (!el.includeMic.checked || !transcriber?.recognition || transcriber.stopping
+  // `active`, not `recognition`: the meeting is still being recorded while the
+  // recognizer waits for its scheduled restart, and the microphone must not be
+  // silently dropped because the stream arrived during that gap.
+  if (!el.includeMic.checked || !transcriber?.active
       || el.record.getAttribute('aria-pressed') !== 'true') { stopStream(res.stream); return; }
 
   try {
@@ -2161,7 +2248,7 @@ el.includeMic.addEventListener('change', () => {
     // a stored grant the request is auto-rejected with no prompt. Ask for the
     // stream only when the grant already exists; otherwise show the button that
     // opens the page which CAN prompt.
-    if (micGranted && transcriber?.running && !mic?.running) {
+    if (micGranted && transcriber?.active && !mic?.running) {
       attachMic(requestMicStream(), el.lang.value, el.localOnly.checked);
     }
     refreshMicPermission();

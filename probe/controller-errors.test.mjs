@@ -79,7 +79,7 @@ function transferController({ respond, saved, extraFunctions = [] } = {}) {
   const h = controller([
     'claimHandoff', 'reclaimAfterSwitch', 'restoreStoredTranscript', 'restoreAutosave',
     'flushAutosave', 'scheduleAutosave', 'ensureTranscriber', 'showIssue', 'setStatus',
-    'armCapture', 'armCaptureAttempt', 'teardown', 'workerRequest', 'setRecording',
+    'setState', 'armCapture', 'armCaptureAttempt', 'teardown', 'workerRequest', 'setRecording',
     ...extraFunctions,
   ], {
     Transcriber, TranscriptStore, MicTranscriber, el, Date: Clock,
@@ -269,16 +269,17 @@ for (const micText of [null, { epoch: 2, segments: [] }]) {
 
 function sourceController(type, outcome) {
   const c = transferController({ extraFunctions: [
-    'popOut', 'backToSidebar', 'releaseForTransfer', 'recoverTransfer', 'replyIsStale', 'setState',
+    'popOut', 'backToSidebar', 'releaseForTransfer', 'recoverTransfer', 'replyIsStale',
+    'recordingInProgress', 'explainReadOnlyView',
   ], respond: async message => {
     if (message.type === 'GET_HOST_WINDOW') return { ok: true, windowId: 5, workerVersion: 4 };
     if (message.type === 'SWITCH_PENDING') return { ok: true, workerVersion: 4 };
     if (message.type === type) return outcome();
   } });
   Object.assign(c.h, {
-    handedOff: false, PROTOCOL_VERSION: 4, activeStart: null,
+    handedOff: false, PROTOCOL_VERSION: 4, activeStart: null, stopInProgress: false,
     prefs: { get: () => ({ windowWidth: 460, windowHeight: 780 }) },
-    switchLogReset: async () => {}, window: { close() {} },
+    switchLogReset: async () => {}, window: { close() {} }, hideModelPanel() {},
   });
   c.h.restoreStoredTranscript(savedTranscript('Source transcript kept for download'));
   c.h.transcriber.running = true;
