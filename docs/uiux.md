@@ -373,6 +373,37 @@ question outright — it saves and clears, and the bar closes with it. Cancel an
 Escape preserve the transcript, initial focus remains on Cancel, and Undo backs
 every deletion either control performs.
 
+## The first-run notice downloads the model instead of offering the cloud
+
+The notice's only action used to be **Use cloud instead**, which is a strange
+thing for it to offer: the panel is explaining that the on-device model needs
+fetching, and the one button on it took the user somewhere else — off the
+default privacy posture, with their preference silently rewritten.
+
+It now offers **Download now**, which installs the model on its own. That is the
+thing the notice is about, and it removes the real friction: previously the only
+way to get the model was to press Record and let a meeting begin behind a
+several-minute install.
+
+The download is deliberately not a recording. It runs on its own
+`AbortController` rather than `activeStart`, so `recordingInProgress()` stays
+false and a view switch cannot try to resume a recording that never began; it
+arms no capture and creates no recognizer. It writes only to the model panel,
+never to the status line, which belongs to capture and recognition. Pressing
+Record, or switching views, supersedes the standalone wait so two writers never
+fight over the panel. Chrome cannot cancel an install it has started, so
+aborting ends this document's wait and timers, not the download.
+
+**Retry download** now retries the download rather than starting a recording,
+for the same reason. While downloading, the action row is hidden: Chrome exposes
+no cancel, so there is nothing left to press. On `unavailable`/`unsupported`
+the download button is hidden too — there is nothing to fetch, and offering it
+would be a lie.
+
+Cloud recognition remains available by unticking **On-device only** in
+preferences, applying at the next recording. What is gone is the mid-download
+escape hatch and anything that switches the user's recognition mode for them.
+
 ## The switch log is gone from the panel
 
 The step-by-step record of a view switch stays — it costs one session-storage

@@ -32,21 +32,29 @@ function element() {
 function recognitionController(t) {
   const instances = [];
   const installation = deferred();
-  let installs = 0;
+  let installs = 0, installed = false;
   class Recognition {
-    static available() { return Promise.resolve('downloadable'); }
-    static install() { installs += 1; return installation.promise; }
+    // Report what Chrome would: the pack is downloadable until the install
+    // actually completes, and available afterwards. A fake that stays
+    // 'downloadable' forever would make a successful start look like a failure.
+    static available() { return Promise.resolve(installed ? 'available' : 'downloadable'); }
+    static install() {
+      installs += 1;
+      return installation.promise.then((ok) => { installed = ok !== false; return installed; });
+    }
     constructor() { instances.push(this); }
     start() {} stop() {} abort() {}
   }
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'self');
   Object.defineProperty(globalThis, 'self', { configurable: true, value: { SpeechRecognition: Recognition } });
   t.after(() => previous ? Object.defineProperty(globalThis, 'self', previous) : delete globalThis.self);
-  const el = Object.fromEntries(['record', 'lang', 'localOnly', 'status'].map(name => [name, element()]));
+  const el = Object.fromEntries(['record', 'lang', 'localOnly', 'status', 'downloadModel',
+    'retryModel', 'modelActions'].map(name => [name, element()]));
   el.localOnly.checked = true; el.lang.value = 'en-US';
   const track = { readyState: 'live' };
-  const h = controller(['useCloudInstead', 'start', 'stop', 'ensureTranscriber', 'fatalRecognitionMessage', 'setStatus'], {
+  const h = controller(['downloadModelNow', 'start', 'stop', 'ensureTranscriber', 'fatalRecognitionMessage', 'setStatus'], {
     el, Transcriber, AbortController, activeStart: null, stopInProgress: false,
+    modelDownload: null,
     modelPreviewVersion: 0, armed: true, micGranted: false, micBlocked: false,
     mic: null, transcriber: null, handedOff: false, handoffBlocked: false, switching: false,
     modelTimer: null,
@@ -56,30 +64,47 @@ function recognitionController(t) {
     attachMic() {}, switchLog() {}, teardown: async () => {}, setState() {},
     setRecording(recording) { el.record.setAttribute('aria-pressed', String(recording)); },
   });
-  t.after(async () => { h.activeStart?.abort(); await h.transcriber?.stop({ flushMs: 0 }); });
+  t.after(async () => { h.activeStart?.abort(); h.modelDownload?.abort(); await h.transcriber?.stop({ flushMs: 0 }); });
   return { h, el, instances, installation, installs: () => installs };
 }
 
-test('explicit cloud choice supersedes pending installation; late local completion stays inert', async t => {
-  const { h, el, instances, installation, installs } = recognitionController(t);
-  const local = h.start({ gesture: true }); await settle();
+test('Download now installs the model without capturing the tab or entering recording', async t => {
+  const { h, el, installation, installs } = recognitionController(t);
+  const download = h.downloadModelNow(); await settle();
+  assert.equal(installs(), 1, 'the control really starts Chrome\'s install');
+  // The whole point of the button: no Record press, so no capture and no
+  // recording state. A panel that silently began transcribing would be worse
+  // than the extra click it saves.
+  assert.equal(el.record.getAttribute('aria-pressed'), undefined);
+  assert.equal(h.activeStart, null, 'a download is not a start attempt');
+  assert.equal(el.downloadModel.disabled, true, 'the control cannot be pressed twice');
+  installation.resolve(true);
+  await download;
+  assert.equal(el.downloadModel.disabled, false, 'the control is usable again afterwards');
+  assert.equal(h.modelDownload, null, 'the finished download releases its controller');
+});
+
+test('a standalone download superseded by Record cannot revive its panel', async t => {
+  const { h, el, installation, installs } = recognitionController(t);
+  const download = h.downloadModelNow(); await settle();
   assert.equal(installs(), 1);
-  assert.equal(instances.length, 0, 'no cloud recognition without the user choosing it');
-  assert.equal(el.localOnly.checked, true);
-  const oldAttempt = h.activeStart;
-  await h.useCloudInstead();
-  assert.equal(oldAttempt.signal.aborted, true, 'cloud click must cancel the local attempt');
-  assert.equal(el.localOnly.checked, false);
-  assert.equal(instances.length, 1);
-  assert.equal(instances[0].processLocally, false);
-  assert.notEqual(h.activeStart, oldAttempt);
-  assert.equal((await local).cancelled, true);
-  const cloudAttempt = h.activeStart, cloudStatus = el.status.textContent;
-  installation.resolve(true); await settle();
-  assert.equal(instances.length, 1);
-  assert.equal(h.activeStart, cloudAttempt);
-  assert.equal(el.status.textContent, cloudStatus);
+  const standalone = h.modelDownload;
+
+  // Pressing Record while the standalone download runs: Start owns model
+  // preparation from here, so the earlier wait must be abandoned. This is the
+  // invariant the removed "Use cloud instead" test protected, re-pointed at the
+  // control that replaced it.
+  const started = h.start({ gesture: true }); await settle();
+  assert.equal(standalone.signal.aborted, true, 'Record supersedes the standalone wait');
   assert.equal(el.record.getAttribute('aria-pressed'), 'true');
+
+  const startAttempt = h.activeStart;
+  installation.resolve(true); await settle();
+  assert.equal(h.activeStart, startAttempt, 'a late install cannot replace the live attempt');
+  assert.equal(el.record.getAttribute('aria-pressed'), 'true');
+  await download;
+  h.activeStart?.abort();
+  await started;
 });
 
 test('delayed onend after Stop resolves preserves the tab-ended reason until the next recognizer', async t => {

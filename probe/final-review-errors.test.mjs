@@ -67,7 +67,7 @@ function controller(t, { respond = () => undefined, availability = async () => '
   const el = Object.fromEntries(['record', 'popout', 'status', 'issues', 'dot', 'transcript',
     'copy', 'download', 'clear', 'undoBar', 'lang', 'localOnly', 'includeMic', 'micHint',
     'micStatus', 'micGrant', 'prefsPanel', 'modelPanel', 'modelTitle', 'modelBody',
-    'modelState', 'modelHint', 'modelActions', 'modelElapsed', 'retryModel'].map(name => [name, element()]));
+    'modelState', 'modelHint', 'modelActions', 'modelElapsed', 'downloadModel', 'retryModel'].map(name => [name, element()]));
   el.lang.value = 'en-US'; el.prefsPanel.hidden = el.modelPanel.hidden = el.issues.hidden = true;
   const makeStream = () => {
     const track = { readyState: 'live', addEventListener() {}, stop() { this.readyState = 'ended'; } };
@@ -79,6 +79,7 @@ function controller(t, { respond = () => undefined, availability = async () => '
     IS_WINDOW: false, PROTOCOL_VERSION: 4, receiverId: 'final-review-receiver', workerStale: false,
     handedOff: false, handoffBlocked: false, switching: false, reclaiming: false, reclaimQueued: false,
     activeStart: null, stopInProgress: false, armed: false, armingPromise: null,
+    modelDownload: null,
     transcriber: null, mic: null, graph: null, stream: null, micGranted: false, micBlocked: false,
     autosaveTimer: null, autosaveQueue: Promise.resolve(), autosaveBlocked: false,
     AUTOSAVE_KEY: 'liveTranscript', targetTabId: 42, targetTitle: '', savedText: '', clearedSnapshot: null,

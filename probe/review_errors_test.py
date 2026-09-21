@@ -5,18 +5,55 @@ from ux_test import UI
 from error_paths_test import BOOT, prepare, reload, snapshot
 
 
-def cloud_during_install(ui):
+def download_now_during_preview(ui):
+    """The first-run notice can fetch the model without starting a recording.
+
+    Replaces the old "Use cloud instead" regression. That button was the notice's
+    only action and it silently switched the user off on-device recognition; this
+    one does what the notice is actually about. The invariant carried over is the
+    important half: an install this document is no longer waiting on must not
+    resurrect its panel.
+    """
     reload(ui)
-    ui.js("fault.availability='downloadable'; fault.holdInstall=true; document.getElementById('recordBtn').click()")
-    ui.chrome.wait_for_js(ui.sid,"typeof finishInstall==='function'",timeout=5)
-    ui.js("document.getElementById('useCloudBtn').click()")
-    time.sleep(.4)
-    ui.check('explicit cloud choice starts cloud recognition during pending local install',
-             ui.js("recognizers.length===1 && recognizers[0].processLocally===false"),snapshot(ui))
-    ui.js("fault.availability='available'; finishInstall(true)")
+    ui.js("document.getElementById('localOnly').checked=true;fault.availability='downloadable';fault.holdInstall=true;"
+          "document.getElementById('localOnly').dispatchEvent(new Event('change'))")
+    ui.chrome.wait_for_js(ui.sid, "!document.getElementById('modelPanel').hidden", timeout=6)
+    offered = ui.js("""({
+      downloadShown: !document.getElementById('downloadModelBtn').hidden,
+      cloudGone: !document.getElementById('useCloudBtn'),
+      body: document.getElementById('modelBody').textContent,
+    })""")
+    ui.check('the first-run notice offers to download the model',
+             offered['downloadShown'], offered)
+    ui.check('and no longer offers to switch the user to the cloud',
+             offered['cloudGone'], offered)
+
+    before_captures = ui.js("captureTracks.length")
+    ui.js("document.getElementById('downloadModelBtn').click()")
+    ui.chrome.wait_for_js(ui.sid, "typeof finishInstall==='function'", timeout=6)
+    during = ui.js("""({
+      pressed: document.getElementById('recordBtn').getAttribute('aria-pressed'),
+      recognizers: recognizers.length,
+      state: document.getElementById('modelState').textContent,
+      captures: captureTracks.length,
+    })""")
+    ui.check('Download now installs without entering the recording state',
+             during['pressed'] != 'true' and during['recognizers'] == 0, during)
+    # The panel arms tab capture when it OPENS, so the meaningful claim is that
+    # downloading adds no capture of its own — not that none exists.
+    ui.check('and acquires no additional tab capture of its own',
+             during['captures'] == before_captures,
+             {'before': before_captures, **during})
+    ui.check('while the notice reports the download', 'download' in during['state'].lower(), during)
+
+    # Record supersedes the standalone wait; the late install must stay inert.
+    ui.js("document.getElementById('recordBtn').click()")
     time.sleep(.3)
-    ui.check('late local installation cannot revive a superseded attempt',
-             ui.js("recognizers.length===1 && recognizers.every(r=>r.processLocally===false)"),snapshot(ui))
+    ui.js("fault.availability='available'; finishInstall(true)")
+    time.sleep(.4)
+    ui.check('a late standalone install cannot resurrect its own panel',
+             ui.js("document.getElementById('recordBtn').getAttribute('aria-pressed')==='true'"),
+             snapshot(ui))
 
 
 def model_poll_error(ui):
@@ -127,7 +164,7 @@ if __name__=='__main__':
     ui=UI()
     try:
         prepare(ui)
-        cloud_during_install(ui)
+        download_now_during_preview(ui)
         model_poll_error(ui)
         delayed_end(ui)
         microphone_errors(ui)

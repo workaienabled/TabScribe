@@ -148,13 +148,17 @@ file written by **Download**, labelled `You:` against `Meeting:`.
   meeting transcript.
 
 **On-device only** is enabled by default. Chrome may need a one-time speech-model
-download, roughly 300 MB per language. The notice shows elapsed time and an
-indeterminate bar because Chrome does not expose a download percentage. Once the
-model is ready, the notice disappears—there is no “Done” banner.
+download, roughly 300 MB per language. The first-run notice offers **Download now**,
+which fetches the model on its own so a meeting does not start behind a
+several-minute install; pressing Record downloads it automatically too. The notice
+shows elapsed time and an indeterminate bar because Chrome does not expose a
+download percentage. Once the model is ready, the notice disappears—there is no
+“Done” banner.
 
-Turning off **On-device only**, or choosing **Use cloud instead**, uses Chrome's
-cloud recognition and sends audio to Google's speech service. No cloud fallback
-happens automatically. The extension UI has no remote fonts, analytics, or scripts.
+Turning off **On-device only** uses Chrome's cloud recognition and sends audio to
+Google's speech service. It applies at the next recording; no cloud fallback
+happens automatically, and nothing switches you to the cloud on your behalf.
+The extension UI has no remote fonts, analytics, or scripts.
 Transcripts are kept in memory; pop-out handoff temporarily uses session storage.
 Use Download before closing the view. Preferences persist; transcript history does not.
 

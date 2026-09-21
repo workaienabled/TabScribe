@@ -106,12 +106,14 @@ def main():
                   'First run needs a one-time download';
                 document.getElementById('modelBody').innerHTML =
                   "Transcribing English (US) on-device needs Chrome's speech model — " +
-                  "roughly 300&nbsp;MB, downloaded once. Press <strong>Start</strong> and " +
-                  "it will download automatically; on a slow connection expect several minutes.";
+                  "roughly 300&nbsp;MB, downloaded once. <strong>Download now</strong>, or " +
+                  "press Record and it will download automatically; on a slow connection " +
+                  "expect several minutes.";
                 document.getElementById('modelState').textContent = 'Not downloaded yet';
                 document.getElementById('modelElapsed').textContent = '';
                 document.getElementById('modelHint').hidden = true;
                 document.getElementById('modelActions').hidden = false;
+                document.getElementById('downloadModelBtn').hidden = false;
                 document.getElementById('retryModelBtn').hidden = true;
                 document.getElementById('status').textContent =
                   'Ready. Press Record to transcribe this tab.';
@@ -123,7 +125,7 @@ def main():
                 const p = document.getElementById('modelPanel');
                 p.hidden = false; p.className = 'model-panel';
                 document.getElementById('modelTitle').textContent =
-                  'First run: one-time model download';
+                  'One-time model download';
                 document.getElementById('modelBody').innerHTML =
                   "TabScribe transcribes on your own machine using Chrome's English (US) " +
                   "speech model — roughly 300&nbsp;MB. It downloads once, then works " +
@@ -131,7 +133,8 @@ def main():
                 document.getElementById('modelState').textContent = 'Downloading…';
                 document.getElementById('modelElapsed').textContent = '2m 14s elapsed';
                 document.getElementById('modelHint').hidden = false;
-                document.getElementById('modelActions').hidden = false;
+                // Chrome cannot cancel its download, so the row is empty here.
+                document.getElementById('modelActions').hidden = true;
                 document.getElementById('retryModelBtn').hidden = true;
                 document.getElementById('status').textContent =
                   'Downloading on-device model for en-US…';
@@ -150,6 +153,7 @@ def main():
                 document.getElementById('modelElapsed').textContent = '4m 02s elapsed';
                 document.getElementById('modelHint').hidden = true;
                 document.getElementById('modelActions').hidden = false;
+                document.getElementById('downloadModelBtn').hidden = true;
                 document.getElementById('retryModelBtn').hidden = false;
                 return true;
               })()

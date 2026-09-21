@@ -278,6 +278,7 @@ function sourceController(type, outcome) {
   } });
   Object.assign(c.h, {
     handedOff: false, PROTOCOL_VERSION: 4, activeStart: null, stopInProgress: false,
+    modelDownload: null,
     prefs: { get: () => ({ windowWidth: 460, windowHeight: 780 }) },
     switchLogReset: async () => {}, window: { close() {} }, hideModelPanel() {},
   });

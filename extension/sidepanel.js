@@ -70,7 +70,7 @@ const el = {
   modelElapsed: document.getElementById('modelElapsed'),
   modelHint: document.getElementById('modelHint'),
   modelActions: document.getElementById('modelActions'),
-  useCloud: document.getElementById('useCloudBtn'),
+  downloadModel: document.getElementById('downloadModelBtn'),
   retryModel: document.getElementById('retryModelBtn'),
 };
 
@@ -842,11 +842,15 @@ function onModelProgress(info) {
     case 'downloading':
       if (!modelTimer) startModelTimer();
       showModelPanel({
-        title: 'First run: one-time model download',
+        title: 'One-time model download',
         body: `TabScribe transcribes on your own machine using Chrome's ${lang} speech ` +
               'model — roughly 300 MB. After installation, it can work ' +
               'offline. You can leave this open and keep using the tab.',
         state: 'Downloading…',
+        // Chrome cannot cancel its own download, and the model is already on its
+        // way, so there is nothing left to press. Showing a disabled control
+        // would just be clutter on a panel the user has to sit and watch.
+        actions: false,
       });
       break;
 
@@ -869,6 +873,9 @@ function onModelProgress(info) {
         phase: 'failed',
         hint: false,
       });
+      // Retry IS the download control here; two buttons doing the same thing
+      // side by side would only make the user choose between them.
+      el.downloadModel.hidden = true;
       el.retryModel.hidden = false;
       break;
 
@@ -884,6 +891,8 @@ function onModelProgress(info) {
         phase: 'failed',
         hint: false,
       });
+      // There is nothing to fetch, so offering to fetch it would be a lie.
+      el.downloadModel.hidden = true;
       el.retryModel.hidden = true;
       // The remedies (pick another language, untick "On-device only") live in the
       // preferences group, so open it rather than describing controls the user
@@ -896,22 +905,57 @@ function onModelProgress(info) {
   }
 }
 
-async function useCloudInstead() {
-  if (stopInProgress || el.record.disabled) return;
-  // Only this explicit choice may supersede local preparation. Abort its wait
-  // before Start's busy guard; a late install result must not revive it.
-  activeStart?.abort();
-  activeStart = null;
-  el.localOnly.checked = false;
-  savePrefsFromUi();
-  hideModelPanel();
-  // Reached from the notice's own button, so the activation is still live.
-  await start({ gesture: true });
+/**
+ * Install the on-device model on its own, without recording.
+ *
+ * The first-run notice used to offer only the cloud. Someone who wants the
+ * on-device model had no way to fetch it except to press Record and let a
+ * meeting start behind a several-minute download. This is that download as a
+ * deliberate act: no capture, no recognizer, no recording state.
+ *
+ * It keeps its own AbortController rather than borrowing activeStart, because
+ * this is explicitly NOT a start attempt — recordingInProgress() must stay
+ * false, or a view switch would try to resume a recording that never began.
+ * Chrome cannot cancel its own download; aborting only ends this document's
+ * wait, timers and panel updates.
+ */
+let modelDownload = null;
+
+async function downloadModelNow() {
+  if (modelDownload && !modelDownload.signal.aborted) return;
+  const attempt = new AbortController();
+  modelDownload = attempt;
+  const current = () => modelDownload === attempt && !attempt.signal.aborted;
+  const lang = el.lang.value;
+  el.downloadModel.disabled = true;
+  el.retryModel.hidden = true;
+  try {
+    await Transcriber.ensureModel(lang, {
+      allowCloudFallback: false,
+      signal: attempt.signal,
+      // No onStatus: the status line belongs to capture and recognition, and
+      // nothing is being captured. The panel is this download's own channel.
+      onProgress: (info) => { if (current()) onModelProgress(info); },
+    });
+  } catch (e) {
+    // An abort means Record (or a view switch) took over model preparation and
+    // owns the panel now. Reporting it would overwrite their state with a
+    // failure the user cannot act on.
+    if (current()) {
+      onModelProgress({ phase: 'failed', error: String(e?.message || e) });
+    }
+  } finally {
+    if (current()) modelDownload = null;
+    el.downloadModel.disabled = false;
+  }
 }
 
 async function retryModel() {
   el.retryModel.hidden = true;
-  if (!el.record.disabled) await start({ gesture: true });
+  // Retry the DOWNLOAD, not a recording. Reaching this button means the model
+  // is still missing, so starting capture here would repeat the original
+  // problem: a meeting beginning behind a multi-minute install.
+  await downloadModelNow();
 }
 
 /* ---------------------------------------------------------------- preferences */
@@ -1133,6 +1177,11 @@ async function releaseForTransfer() {
   switching = true;
   activeStart?.abort();
   activeStart = null;
+  // A standalone model download belongs to THIS document's panel. The receiving
+  // view checks the model itself, so leave nothing here waiting on an install
+  // whose notice nobody can see.
+  modelDownload?.abort();
+  modelDownload = null;
   // A Start abandoned mid-download returns through its `!current()` branch,
   // which skips its own cleanup; an inert document must not keep a download
   // notice counting elapsed time behind the window.
@@ -1440,6 +1489,10 @@ async function start({ gesture = false, allowMic = false } = {}) {
     return { ok: false, busy: true };
   }
   activeStart?.abort();
+  // A standalone model download is superseded too: Start owns model preparation
+  // from here, and two writers on the same panel would fight over it.
+  modelDownload?.abort();
+  modelDownload = null;
   modelPreviewVersion += 1;
   const attempt = new AbortController();
   activeStart = attempt;
@@ -2295,7 +2348,7 @@ el.popout.addEventListener('click', () => {
   const pendingOpen = requestSidebarOpen();
   return backToSidebar(pendingOpen);
 });
-el.useCloud.addEventListener('click', useCloudInstead);
+el.downloadModel.addEventListener('click', downloadModelNow);
 el.retryModel.addEventListener('click', retryModel);
 el.prefsBtn.addEventListener('click', (event) => {
   const opening = el.prefsPanel.hidden;
@@ -2411,12 +2464,13 @@ async function previewModelState() {
     showModelPanel({
       title: 'First run needs a one-time download',
       body: `Transcribing ${langName(lang)} on-device needs Chrome's speech model — ` +
-            'roughly 300 MB, downloaded once. Press Record and it ' +
+            'roughly 300 MB, downloaded once. Download it now, or press Record and it ' +
             'will download automatically; on a slow connection expect several minutes.',
       state: 'Not downloaded yet',
       phase: 'idle',
       hint: false,
     });
+    el.downloadModel.hidden = false;
     el.retryModel.hidden = true;
     return;
   }

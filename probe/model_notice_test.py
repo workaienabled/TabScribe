@@ -171,14 +171,26 @@ def main():
                    before.get("body", "")[:70])
         checks.add("warns that slow connections take minutes", "minute" in blob or "slow" in blob,
                    before.get("body", "")[:70])
-        checks.add("offers a cloud alternative",
+        checks.add("offers to download the model without pressing Record",
                    not before.get("actionsHidden") and chrome.evaluate(
-                       panel_sid, "!document.getElementById('useCloudBtn').hidden",
+                       panel_sid, "!document.getElementById('downloadModelBtn').hidden",
                        await_promise=False))
+        checks.add("no longer offers to switch the user to the cloud",
+                   chrome.evaluate(panel_sid, "!document.getElementById('useCloudBtn')",
+                                   await_promise=False))
 
         # --- DURING DOWNLOAD --------------------------------------------------
         print("\n=== NOTICE DURING DOWNLOAD ===", flush=True)
-        chrome.evaluate(panel_sid, "document.getElementById('recordBtn').click()", await_promise=False)
+        # Drive the real first-run path: the notice's own Download now button,
+        # not Record. This is the case the control exists for — fetching the
+        # model without a meeting starting behind it.
+        chrome.evaluate(panel_sid, "document.getElementById('downloadModelBtn').click()",
+                        await_promise=False)
+        started_recording = chrome.evaluate(
+            panel_sid, "document.getElementById('recordBtn').getAttribute('aria-pressed')",
+            await_promise=False)
+        checks.add("downloading does not start a recording",
+                   started_recording != "true", f"aria-pressed={started_recording}")
 
         during = {}
         saw_downloading = False
@@ -260,7 +272,11 @@ def main():
                    not saw_done_state and "done" not in (final.get("classes") or ""),
                    json.dumps(saw_done_state[:2]) if saw_done_state else json.dumps(final))
 
-        # And transcription actually works afterwards.
+        # And transcription actually works afterwards. Download now deliberately
+        # does NOT start recording, so press Record here: the claim is that a
+        # model fetched on its own is usable, not that downloading transcribes.
+        chrome.evaluate(panel_sid, "document.getElementById('recordBtn').click()",
+                        await_promise=False)
         state = ""
         deadline = time.time() + 45
         while time.time() < deadline:
@@ -269,8 +285,8 @@ def main():
             if state in ("listening", "error"):
                 break
             time.sleep(0.5)
-        checks.add("transcription starts after the download", state == "listening",
-                   f"state={state}")
+        checks.add("a separately downloaded model transcribes when Record is pressed",
+                   state == "listening", f"state={state}")
     finally:
         with open(os.path.join(HERE, "model_notice_result.json"), "w") as f:
             json.dump({"checks": checks.items, "passed": checks.passed}, f, indent=2)
