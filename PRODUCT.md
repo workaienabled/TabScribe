@@ -24,6 +24,9 @@
   or an “Ask AI” button unless the founder separately requests an integration.
 - Copy may mean a selected passage or the whole transcript; label that scope clearly.
   Download always means the whole transcript, even while a passage is selected.
+  Download also clears what it saved, so one press ends a meeting; because an
+  anchor click cannot prove the file reached disk, that clear is always backed by
+  Undo and its feedback says the text was cleared rather than claiming it is safe.
 - Keep default-on select-to-copy and the separate optional short “Copied” toast.
   Copy confirmation must not replace recognition status or flash the transcript.
 - Keep occasional settings behind the gear. Theme, reading size, language, and

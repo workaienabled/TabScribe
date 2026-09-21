@@ -351,16 +351,27 @@ document that did each. The next report of this bug can carry the sequence
 rather than the symptom. (It was briefly shown under the gear; see below for why
 it no longer is.)
 
-## Delete never treats a request as a saved file
+## Download saves and clears, and Delete asks
 
-The original “Download and delete” design incorrectly treated an anchor click
-as a completed write. A cancelled or failed browser download could therefore
-lose the transcript. With unchanged permissions, completion is unobservable.
+The original “Download and delete” design treated an anchor click as a completed
+write with nothing behind it, so a cancelled or failed browser download simply
+lost the transcript. With unchanged permissions, completion is still
+unobservable — the fix is not to pretend otherwise but to make the optimistic
+delete survivable.
 
-The confirmation now offers **Download first**, **Delete**, and **Cancel**.
-Download first retains the text and asks the user to check Chrome’s downloads.
-Only explicit Delete removes it. Cancel and Escape preserve the transcript,
-and initial focus remains on Cancel. Undo still backs an explicit deletion.
+Download therefore writes the file and clears the transcript in one press, which
+is what ending a meeting actually means, and leaves **Undo** holding the text for
+as long as the view is open. The acknowledgement says the transcript was cleared
+and asks the user to check Chrome’s downloads before closing; it never claims the
+file is on disk. A partial export is the one exception: when microphone text
+cannot be merged, the download keeps the transcript, because clearing would
+destroy the half that never reached the file.
+
+Delete still asks whenever the text is not on disk, and its confirmation offers
+**Download first**, **Delete**, and **Cancel**. Download first now answers the
+question outright — it saves and clears, and the bar closes with it. Cancel and
+Escape preserve the transcript, initial focus remains on Cancel, and Undo backs
+every deletion either control performs.
 
 ## The switch log is gone from the panel
 

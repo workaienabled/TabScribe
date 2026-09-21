@@ -38,8 +38,8 @@ function element() {
 
 function dataController({ meeting = '', microphone = '', includeMic = true, savedText = '', extra = {} } = {}) {
   const el = Object.fromEntries(['download', 'copy', 'clear', 'transcript', 'empty',
-    'timestamps', 'includeMic', 'prefsPanel', 'undoBar', 'jumpLatest', 'hiddenNotice',
-    'hiddenCount'].map(name => [name, element()]));
+    'timestamps', 'includeMic', 'prefsPanel', 'undoBar', 'undoLabel', 'jumpLatest',
+    'hiddenNotice', 'hiddenCount'].map(name => [name, element()]));
   el.includeMic.checked = includeMic;
   el.prefsPanel.hidden = el.undoBar.hidden = true;
   const actions = [], issues = new Map();
@@ -170,15 +170,18 @@ test('merge failure exports the core meeting with an explicit microphone-omissio
   assert.match(c.issues.get('microphone-export'), /microphone/i);
   assert.match(c.issues.get('microphone-export'), /merge broke/);
   assert.match(c.issues.get('microphone-export'), /kept|retained/i);
+  // A partial export is not the meeting the user asked to save, so this is the
+  // one download that must not clear: the microphone half never reached a file.
   assert.equal(c.h.transcriber.store.toText(), 'Meeting kept');
   assert.equal(c.h.mic.store.toText(), 'Microphone kept');
+  assert.equal(c.el.undoBar.hidden, true, 'nothing was deleted, so there is nothing to undo');
   assert.equal(c.h.hasUnsavedTranscript(), true);
   c.h.clear();
   assert.equal(c.confirmed(), 1, 'the partial export cannot bypass Delete confirmation');
 });
 
 for (const includeMic of [true, false]) {
-  test(`download bytes match microphone inclusion (includeMic=${includeMic}) without marking saved`, async () => {
+  test(`download writes the requested bytes (includeMic=${includeMic}) and then clears both channels`, async () => {
     const c = downloadController({ meeting: 'Meeting kept', microphone: 'Microphone kept', includeMic });
     assert.equal(c.h.download(), true);
     assert.equal(c.requests.length, 1);
@@ -186,12 +189,47 @@ for (const includeMic of [true, false]) {
     assert.equal(await c.blobs[0].text(), includeMic
       ? 'Meeting: Meeting kept\nYou: Microphone kept' : 'Meeting kept');
     assert.equal(/including your microphone/.test(c.actions.at(-1)[1]), includeMic);
-    assert.equal(c.h.hasUnsavedTranscript(), true);
-    assert.equal(c.h.savedText, '');
-    c.h.clear();
-    assert.equal(c.confirmed(), 1);
+
+    // Download is now the whole "save it and start clean" action, so the text
+    // goes after the file is requested. Both channels clear regardless of the
+    // export preference: leaving microphone text behind would resurrect speech
+    // in the NEXT download that the user believes they already filed away.
+    assert.equal(c.h.transcriber.store.isEmpty(), true);
+    assert.equal(c.h.mic.store.isEmpty(), true);
+    assert.equal(c.h.hasUnsavedTranscript(), false);
+    assert.equal(c.el.download.disabled, true);
+    assert.equal(c.el.clear.disabled, true);
+
+    // The anchor cannot report that the file reached disk, so the recovery copy
+    // is the only safety net a cancelled save dialog has.
+    assert.equal(c.el.undoBar.hidden, false, 'a downloaded delete is still undoable');
+    assert.match(c.actions.at(-1)[1], /undo/i);
+    c.h.undoClear();
+    assert.equal(c.h.transcriptForSaving(), includeMic
+      ? 'Meeting: Meeting kept\nYou: Microphone kept' : 'Meeting kept');
   });
 }
+
+test('a download that never started leaves the transcript alone', () => {
+  const c = downloadController({ meeting: 'Meeting kept', microphone: 'Microphone kept',
+    extra: { URL: { createObjectURL() { throw new Error('allocation failed'); },
+                    revokeObjectURL() {} } } });
+  assert.equal(c.h.download(), false);
+  assert.equal(c.requests.length, 0);
+  assert.match(c.issues.get('download'), /allocation failed/);
+  assert.equal(c.h.transcriber.store.toText(), 'Meeting kept');
+  assert.equal(c.h.mic.store.toText(), 'Microphone kept');
+  assert.equal(c.el.undoBar.hidden, true);
+  assert.equal(c.h.hasUnsavedTranscript(), true);
+});
+
+test('downloading an empty transcript deletes nothing and offers no undo', () => {
+  const c = downloadController();
+  assert.equal(c.h.download(), false);
+  assert.equal(c.requests.length, 0);
+  assert.equal(c.el.undoBar.hidden, true);
+  assert.match(c.actions.at(-1)[0], /nothing to download/i);
+});
 
 function deferred() {
   let resolve, reject;

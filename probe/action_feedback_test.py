@@ -81,6 +81,14 @@ def acknowledgement(ui):
     ui.check('the download acknowledges itself and is announced',
              saved['done'] is True and 'download' in saved['announced'].lower(), saved)
 
+    # That download also cleared the transcript. Take it back: the failure below
+    # is about a download that breaks while building the file, which needs text
+    # to build from — against an empty panel it would report "nothing to
+    # download" and this check would pass for the wrong reason.
+    ui.undo_clear()
+    ui.check('Undo restores the transcript the download cleared',
+             ui.js("document.querySelectorAll('.seg').length") == 3)
+
     # --- a real failure must still reach the status line --------------------
     ui.js("""(() => {
       window.__realCreate = URL.createObjectURL;

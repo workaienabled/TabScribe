@@ -94,8 +94,13 @@ def the_two_really_differ(ui, download_dir):
     ui.check('Clear screen leaves the downloaded transcript whole',
              kept.count('Segment') >= 6, {'chars': len(kept)})
 
+    # That download also cleared the transcript, which is Download's job now.
+    # Undo restores it so the comparison below is against the same six rows.
+    ui.undo_clear()
     ui.js("document.getElementById('showHiddenBtn').click()")
     time.sleep(0.3)
+    ui.check('Undo restores the rows the download cleared',
+             ui.js("document.querySelectorAll('.seg').length") == 6)
     ui.delete_transcript()
     time.sleep(0.5)
     after = ui.js("""({

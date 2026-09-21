@@ -1,10 +1,11 @@
 """Delete protects text until the user explicitly accepts the loss.
 
 A download request is not a completed disk write. With unchanged extension
-permissions, TabScribe cannot see completion or cancellation, so Download first
-keeps the transcript and the final Delete remains an explicit user decision.
-Real downloaded content is verified here; denied downloads have a separate
-regression in output_errors_test.py. Run only on a private Xvfb.
+permissions, TabScribe cannot see completion or cancellation, so Download clears
+optimistically and Undo — held in this document's memory — is the recovery path
+for a save the user cancelled. Real downloaded content is verified here; denied
+downloads have a separate regression in output_errors_test.py. Run only on a
+private Xvfb.
 """
 import sys
 import tempfile
@@ -83,20 +84,25 @@ def confirming_deletes_and_undo_still_works(ui):
     ui.check('Undo brings it back', back['segs'] == 4, back)
 
 
-def requested_download_still_requires_confirmation(ui, download_dir):
+def download_saves_and_clears(ui, download_dir):
+    """Download is save-and-finish: the file is written and the view empties."""
     written = ui.download_and_read(download_dir)
     ui.check('the transcript really reached disk',
              'Segment 1.' in written and len(written) > 80,
              written[:70])
 
-    ui.js("document.getElementById('clearBtn').click()")
+    time.sleep(.4)
+    after = confirm_state(ui)
+    ui.check('downloading clears the transcript it just saved', after['segs'] == 0, after)
+    ui.check('and offers Undo, because an anchor cannot prove the file arrived',
+             after['undoShown'] is True, after)
+    ui.check('the cleared transcript leaves nothing to download',
+             ui.js("document.getElementById('downloadBtn').disabled") is True, after)
+
+    ui.js("document.getElementById('undoClearBtn').click()")
     time.sleep(.3)
-    quiet = confirm_state(ui)
-    ui.check('the extension does not mistake its download request for verified saving',
-             quiet['shown'] is True and quiet['segs'] == 4, quiet)
-    ui.check('the transcript is still intact, so Undo is not needed', quiet['undoShown'] is False, quiet)
-    ui.js("document.getElementById('confirmCancelBtn').click()")
-    time.sleep(.3)
+    back = confirm_state(ui)
+    ui.check('Undo brings back every row the download cleared', back['segs'] == 4, back)
 
 
 def new_speech_after_saving_asks_again(ui):
@@ -116,14 +122,10 @@ def new_speech_after_saving_asks_again(ui):
     asks = confirm_state(ui)
     ui.check('speech after a download makes Delete ask again',
              asks['shown'] is True and asks['segs'] == 5, asks)
-    ui.js("document.getElementById('confirmCancelBtn').click()")
-    time.sleep(.15)
 
 
-def download_first_preserves_until_explicit_delete(ui, download_dir):
-    """The remedy the question offers must actually be a remedy."""
-    ui.js("document.getElementById('clearBtn').click()")
-    time.sleep(.15)
+def download_first_answers_the_question(ui, download_dir):
+    """The remedy the question offers must actually end the question."""
     shown = confirm_state(ui)
     ui.check('the question offers saving as the way out', shown['shown'] is True, shown)
 
@@ -133,12 +135,14 @@ def download_first_preserves_until_explicit_delete(ui, download_dir):
              written[-90:])
     time.sleep(.4)
     after = confirm_state(ui)
-    ui.check('requesting the file does not erase the source transcript',
-             after['segs'] == 5, after)
-    ui.check('the question stays open for explicit deletion', after['shown'] is True, after)
-    ui.js("document.getElementById('confirmDeleteBtn').click()")
-    after = confirm_state(ui)
-    ui.check('explicit Delete is still backed by Undo', after['segs'] == 0 and after['undoShown'] is True, after)
+    ui.check('Download first also clears, so the question is answered by saving',
+             after['segs'] == 0, after)
+    ui.check('and the question closes rather than asking a second time',
+             after['shown'] is False, after)
+    ui.check('the delete it performed is still backed by Undo',
+             after['undoShown'] is True, after)
+    ui.check('the Delete control no longer reports an open question',
+             after['deletePressed'] == 'false', after)
 
 
 def the_question_does_not_cover_other_status(ui):
@@ -202,9 +206,9 @@ if __name__ == '__main__':
             asks_when_the_work_is_not_on_disk(ui)
             cancel_destroys_nothing(ui)
             confirming_deletes_and_undo_still_works(ui)
-            requested_download_still_requires_confirmation(ui, downloads)
+            download_saves_and_clears(ui, downloads)
             new_speech_after_saving_asks_again(ui)
-            download_first_preserves_until_explicit_delete(ui, downloads)
+            download_first_answers_the_question(ui, downloads)
             the_question_does_not_cover_other_status(ui)
     except Exception:
         ui.cleanup()

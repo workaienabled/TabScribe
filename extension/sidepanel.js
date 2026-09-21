@@ -32,6 +32,7 @@ const el = {
   cloudWarning: document.getElementById('cloudWarning'),
   clear: document.getElementById('clearBtn'),
   undoBar: document.getElementById('undoBar'),
+  undoLabel: document.getElementById('undoLabel'),
   confirmBar: document.getElementById('confirmBar'),
   confirmSave: document.getElementById('confirmSaveBtn'),
   confirmDelete: document.getElementById('confirmDeleteBtn'),
@@ -2114,11 +2115,32 @@ function download() {
   setTimeout(() => { try { URL.revokeObjectURL(url); } catch (e) { /* already released */ } }, 5000);
   showIssue('download');
   showIssue('microphone-export', microphoneWarning);
-  // An anchor starts a request; it cannot observe cancellation or disk completion.
-  // Without downloads permission, never mark this text saved on that evidence.
-  refreshUnsavedUi();
   const withMic = !microphoneWarning && el.includeMic.checked && mic?.hasText();
-  confirmAction('Download requested', `Download requested: ${name}${microphoneWarning ? ', meeting-only; microphone text could not be included' : withMic ? ', including your microphone' : ''}. Check Chrome’s downloads before deleting; the transcript is kept.`, el.download);
+  if (microphoneWarning) {
+    // Half the meeting never reached the file. Clearing here would destroy the
+    // microphone text this very download failed to save, so the transcript stays
+    // and the omission warning tells the user what is still only in this view.
+    refreshUnsavedUi();
+    confirmAction('Download requested', `Download requested: ${name}, meeting-only; `
+      + 'microphone text could not be included, so the transcript is kept. '
+      + 'Check Chrome’s downloads, then delete it when you are done.', el.download);
+    return true;
+  }
+  // Download is the end of a meeting, so it saves and clears in one press.
+  //
+  // An anchor starts a request and can observe neither completion nor a save
+  // dialog the user dismissed, so this delete is optimistic by construction.
+  // Undo is what makes it survivable — and Undo lives in this document's memory,
+  // which is why the acknowledgement says to check the file before closing the
+  // view rather than claiming the meeting is safely on disk.
+  performClear({
+    toast: 'Downloaded',
+    status: `Download requested: ${name}${withMic ? ', including your microphone' : ''}. `
+      + 'The transcript was cleared; Undo is available until this view closes, '
+      + 'so check Chrome’s downloads before closing it.',
+    control: el.download,
+    undoLabel: 'Downloaded and cleared',
+  });
   return true;
 }
 
@@ -2154,7 +2176,8 @@ function undoClear() {
  * at stake is how people learn to click through confirmations.
  *
  * The question offers the remedy, not just the warning: downloading first is
- * almost always what the user actually wanted.
+ * almost always what the user actually wanted, and Download now clears the
+ * transcript itself, so answering it that way ends the whole interaction.
  */
 function clear() {
   if (hasUnsavedTranscript()) {
@@ -2180,11 +2203,16 @@ function closeDeleteConfirm({ refocus = true } = {}) {
 
 function downloadThenClear() {
   if (!download()) return;
-  document.getElementById('confirmText').textContent = 'Check that the download finished. Delete this transcript only after your file is saved.';
+  // Download clears on its own, which closes the question with it. It only
+  // declines to clear when the export was partial, and then the question stays
+  // open naming what that download left behind rather than repeating itself.
+  if (!hasUnsavedTranscript()) return;
+  document.getElementById('confirmText').textContent =
+    'That file could not include your microphone text. Delete this transcript anyway?';
   el.confirmCancel.focus({ preventScroll: true });
 }
 
-function performClear() {
+function performClear({ toast = 'Transcript deleted', status = 'Transcript deleted. Undo is available for the meeting and microphone text.', control = el.clear, undoLabel = 'Transcript deleted' } = {}) {
   closeDeleteConfirm({ refocus: false });
   // Delete lives in the control row now, so there is no preferences panel to
   // collapse. It is still closed if the user happens to have it open, because
@@ -2200,6 +2228,9 @@ function performClear() {
       snapshot: transcriber?.store.serialize() || new TranscriptStore().serialize(),
       micText: mic?.hasText() ? mic.store.serialize() : null,
     };
+    // Name what happened. After a download the bar is the user's only evidence
+    // that the text went somewhere on purpose rather than disappearing.
+    if (el.undoLabel) el.undoLabel.textContent = undoLabel;
     el.undoBar.hidden = false;
   }
   // Drop the DOM rows and their cached identities first, so nothing from the old
@@ -2230,7 +2261,7 @@ function performClear() {
   el.transcript.classList.remove('holding');
   refreshSelectionUi();
 
-  confirmAction('Transcript deleted', 'Transcript deleted. Undo is available for the meeting and microphone text.', el.clear);
+  confirmAction(toast, status, control);
 }
 
 // The ONLY caller with a live user activation, and so the only one that may ask

@@ -147,6 +147,9 @@ class UI:
         `trigger` names the control: Download itself, or any other control whose
         job includes writing the file (the delete confirmation's save-first
         action, for one) — the point is to read the REAL bytes either way.
+
+        Downloading CLEARS the transcript, so a caller that keeps working with
+        the text afterwards has to call undo_clear() and say so.
         """
         destination = Path(directory) / f'dl-{len(self.checks)}-{int(time.time() * 1000)}'
         destination.mkdir(parents=True)
@@ -159,6 +162,18 @@ class UI:
                 return files[0].read_text()
             time.sleep(0.25)
         return ''
+
+    def undo_clear(self):
+        """Take back the delete a Download (or Delete) just performed.
+
+        Download saves and clears in one press, so suites that carry on using
+        the transcript restore it here rather than assuming it survived.
+        """
+        self.js("""(() => {
+          const bar = document.getElementById('undoBar');
+          if (bar && !bar.hidden) document.getElementById('undoClearBtn').click();
+        })()""")
+        time.sleep(0.3)
 
     def capture_store(self):
         # Test-only observation of the real store during a real render. No hooks

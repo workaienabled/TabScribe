@@ -58,8 +58,11 @@ accessible name; none carries its meaning in colour alone.
   recognition status on success. Paste the passage into your own AI chat;
   TabScribe does not send transcripts to an AI provider.
 - **Download:** always downloads the entire transcript as a plain-text `.txt` file,
-  even with text selected, with timestamps if enabled. Download before closing:
-  transcripts are not saved automatically.
+  even with text selected, with timestamps if enabled. Downloading also clears the
+  transcript, so one press ends a meeting: the file is written and the panel is
+  ready for the next one. **Undo** appears afterwards and restores the text until
+  the view is closed — TabScribe cannot verify the file reached disk, so check
+  Chrome’s downloads before closing.
 - **Your transcript survives closing either view.** It is saved continuously and
   restored the next time you open TabScribe, so closing the side panel, closing
   the pop-out window, or closing the browser does not lose the meeting. It is
@@ -81,14 +84,16 @@ accessible name; none carries its meaning in colour alone.
   your own speech and merges it into the **downloaded file only**. It is never
   shown in the live transcript and never copied by Copy. See below.
 - **Delete transcript** (the red control at the far end of the row, deliberately
-  away from Clear screen): asks before deleting text. **Download first** requests
-  the file and retains the transcript. Check Chrome’s downloads, then choose
-  **Delete** explicitly. TabScribe does not have downloads permission and cannot
-  verify file completion or cancellation. It removes the text, including the current
-  utterance, and keeps listening. Preferences close to reveal **Undo**, which
-  restores the cleared text before anything received since.
-  Only the most recent Clear is recoverable; recovery is held in this view's memory
-  until used, dismissed, replaced by another Clear, or the view is closed.
+  away from Clear screen): asks before deleting text that is not on disk.
+  **Download first** saves the file and clears the transcript in one action, which
+  answers the question. Or choose **Delete** to discard it without saving.
+  TabScribe does not have downloads permission and cannot verify file completion
+  or cancellation, so check Chrome’s downloads before closing the view — **Undo**
+  is the only way back. Delete removes the text, including the current utterance,
+  and keeps listening. Preferences close to reveal Undo, which restores the
+  cleared text before anything received since.
+  Only the most recent clear is recoverable; recovery is held in this view's memory
+  until used, dismissed, replaced by another clear, or the view is closed.
 
 Preferences include spoken language, on-device mode, timestamps, auto-scroll,
 select-to-copy, copy toast, System/Light/Dark appearance, and transcript text

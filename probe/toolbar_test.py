@@ -162,6 +162,9 @@ def clear_screen(ui, download_dir):
              'Example text' not in written or len(written) > 80,
              written[:120])
 
+    # Download clears what it saved, so bringing the hidden text back to the
+    # screen is a question about the recovered transcript, not the cleared one.
+    ui.undo_clear()
     restored = ui.js("""(() => {
       document.getElementById('showHiddenBtn').click();
       return {segs: document.querySelectorAll('.seg').length,
@@ -241,9 +244,14 @@ def unsaved_state_without_a_prompt(ui, download_dir):
 
     ui.download_and_read(download_dir)
     saved = ui.js("""({
+      segs: document.querySelectorAll('.seg').length,
       dot: document.getElementById('downloadBtn').classList.contains('unsaved'),
+      undo: !document.getElementById('undoBar').hidden,
     })""")
-    ui.check('requesting a download is not proof the file is saved', saved['dot'] is True, saved)
+    ui.check('downloading clears the transcript, so nothing is left unsaved',
+             saved['segs'] == 0 and saved['dot'] is False, saved)
+    ui.check('and the delete it performed stays recoverable, since the file is unverified',
+             saved['undo'] is True, saved)
 
     # New speech after a save must mark it again, or the second half of a meeting
     # would look saved when it is not. Appending through the real store, via the
@@ -259,8 +267,8 @@ def unsaved_state_without_a_prompt(ui, download_dir):
               dot: document.getElementById('downloadBtn').classList.contains('unsaved')};
     })()""")
     ui.check('the append reached the real store and was rendered',
-             again['applied'] is True and again['segs'] == 5, again)
-    ui.check('new speech after a download marks it unsaved again',
+             again['applied'] is True and again['segs'] == 1, again)
+    ui.check('speech after a download is marked unsaved again',
              again['dot'] is True, again)
 
 

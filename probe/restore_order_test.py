@@ -44,6 +44,11 @@ def restore_order(ui):
     with tempfile.TemporaryDirectory(prefix='tabscribe-order-dl-') as destination:
         written=ui.download_and_read(destination)
         ui.check('Download still contains all speech in store order', written == full and len(written)>100)
+    # Download clears what it saved; Undo returns the same rows so the second
+    # Clear/Show pass below is still about the transcript built above.
+    ui.undo_clear()
+    ui.check('Undo returns every downloaded row to the screen',
+             ui.js("document.querySelectorAll('.seg').length") == 3)
     # Repeat with another new row so this is not an accidental one-time repair.
     click(ui,'clearScreenBtn')
     ui.js("fixtureStore.update(91,'The second clear also keeps the timeline.',true,91000);document.getElementById('tsToggle').dispatchEvent(new Event('change'))")

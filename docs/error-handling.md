@@ -18,7 +18,7 @@ unexplained: updating Chrome and restarting it changed two variables.
 | Preferences | Validate values on both reads and writes. Keep in-memory choices on write failure and report that persistence failed. Serialize this document’s writes and clear each warning only after that operation recovers. If loading fails, keep the optional microphone off until the choice can be checked; the next write re-reads storage first so the fallback never overwrites the saved choice, and the controls are re-applied once the read recovers. | `prefs-errors.test.mjs`, `persistence_errors_test.py` |
 | Autosave and restore | Warn to Download or Copy before closing when autosave fails. Validate snapshots before changing live stores. Do not overwrite unreadable recovery data. Preserve microphone-only text and remove stale visible rows after a replacement snapshot. A scheduled autosave is flushed on `pagehide`, so the last seconds before a close are not lost; restoring a copy never schedules a write of it, and a document with nothing scheduled writes nothing. | `snapshot-safety.test.mjs`, `final-review-errors.test.mjs`, `output_errors_test.py`, `persistence_errors_test.py` |
 | Copy | Try the browser clipboard and legacy fallback; if both fail, show the manual-copy remedy without replacing the recognition message. A late failure cannot overwrite a newer copy. | `output_errors_test.py`, existing real-clipboard suites |
-| Download and Delete | A browser download request is not proof of a completed file. Keep the transcript and its unsaved marker. “Download first” leaves explicit Delete/Cancel available after the user checks Chrome's downloads. Undo restores both channels. If microphone merging fails, meeting-only export remains available with an explicit omission warning. | `output_errors_test.py`, `delete_confirm_test.py`, real-file download suites |
+| Download and Delete | A browser download request is not proof of a completed file. Download saves and clears in one press; because completion is unobservable, that delete is optimistic and Undo restores both channels until the view closes. The acknowledgement says the transcript was cleared and to check Chrome's downloads; it never claims the file is on disk. If microphone merging fails, meeting-only export remains available with an explicit omission warning and the transcript is KEPT, since clearing would destroy the half that never reached the file. Delete still asks whenever text is not on disk; "Download first" answers that question by saving and clearing. | `output_errors_test.py`, `delete_confirm_test.py`, `controller-data-errors.test.mjs`, real-file download suites |
 | Unexpected UI callback | Show a persistent warning without destroying text or claiming another operation failed. Keep the original exception in DevTools. | `output_errors_test.py` |
 
 Independent operation warnings are displayed as text in an accessible, scrollable
@@ -77,9 +77,12 @@ controllers, stores and DOM. They are not evidence of speech accuracy. The real
 audio suites use known clean single-speaker scripts, not real meetings.
 
 No new permissions are added. Without `downloads` permission, TabScribe cannot
-observe a failed, cancelled or completed browser download. It therefore never
-automatically deletes text or clears the unsaved marker after an anchor click.
-Reliable automatic “save and delete” remains a separate permission decision.
+observe a failed, cancelled or completed browser download. Download therefore
+clears the transcript optimistically and keeps the only recovery it can offer:
+an in-memory Undo, held until the view closes, plus feedback that says the text
+was cleared and the file is unverified. Verified automatic deletion — clearing
+only once Chrome reports the file complete — remains a separate permission
+decision.
 
 Session storage survives a panel close, not a browser exit or extension reload.
 An abrupt process kill, disk failure or browser crash can prevent the last

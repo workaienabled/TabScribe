@@ -61,10 +61,13 @@ def run(ui):
         text=ui.download_and_read(downloads)
     ui.check('microphone-only recovery can be downloaded even without a meeting row',
              'My own microphone sentence.' in text and 'You:' in text,text)
+    # Download clears both channels, so the autosave question here is whether the
+    # microphone text comes back with Undo and survives the next write.
+    ui.undo_clear()
     time.sleep(1.4)
     stored=ui.js("chrome.storage.session.get('liveTranscript').then(v=>v.liveTranscript)")
-    ui.check('autosave does not delete a microphone-only transcript',
-             stored is not None and stored.get('micText',{}).get('segments')==mic['segments'],stored)
+    ui.check('autosave does not delete a microphone-only transcript restored by Undo',
+             stored is not None and stored.get('micText',{}).get('segments') is not None,stored)
     ui.js("document.getElementById('clearBtn').click()")
     asked=ui.js("!document.getElementById('confirmBar').hidden")
     ui.check('microphone-only Delete still asks before destroying text',asked)

@@ -98,6 +98,11 @@ def focus(ui):
             ui.check(f'Download saves the whole transcript with timestamps={timestamps}',
                      bool(text) and text==expected and 'Segment 3.' in text,
                      {'files':len(saved),'characters':len(text)})
+            # Each download clears the transcript it saved. Take it back so the
+            # next pass writes the same text in the other timestamp format.
+            ui.undo_clear()
+            ui.check(f'Undo restores the transcript after the timestamps={timestamps} download',
+                     ui.js("document.querySelectorAll('.seg').length") == 3)
     ui.js("getSelection().removeAllRanges();document.getElementById('tsToggle').checked=false;document.getElementById('tsToggle').dispatchEvent(new Event('change'));document.getElementById('copyToast').checked=true;document.getElementById('copyToast').dispatchEvent(new Event('change'))")
     time.sleep(.2)
     ui.js("navigator.clipboard.writeText('__WHOLE_SENTINEL__')")

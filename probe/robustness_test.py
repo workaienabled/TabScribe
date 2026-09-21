@@ -68,6 +68,10 @@ def robustness(ui):
              'download' in downloaded['announced'].lower() and downloaded['done'],
              downloaded)
 
+    # Download cleared what it saved. Restore it, or the failure injected below
+    # would hit the empty-transcript path and prove nothing about a broken save.
+    ui.undo_clear()
+
     # --- a failed download must not be silent --------------------------------
     ui.js("""(() => {
       window.__realCreate = URL.createObjectURL;

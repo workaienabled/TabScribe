@@ -11,6 +11,7 @@ def state(ui):
       segs: document.querySelectorAll('.seg').length,
       unsaved: document.getElementById('downloadBtn').classList.contains('unsaved'),
       confirm: !document.getElementById('confirmBar').hidden,
+      undo: !document.getElementById('undoBar').hidden,
       announcement: document.getElementById('actionLog').textContent,
     })""")
 
@@ -21,11 +22,22 @@ def blocked_download(ui):
     ui.js("document.getElementById('clearBtn').click(); document.getElementById('confirmSaveBtn').click()")
     time.sleep(.25)
     data = state(ui)
-    ui.check('an unconfirmed download never deletes the transcript', data['segs'] == 3, data)
-    ui.check('an unconfirmed download stays marked unsaved', data['unsaved'], data)
-    ui.check('download feedback asks the user to verify, not claims disk success',
-             'requested' in data['announcement'].lower() and 'check' in data['announcement'].lower(), data)
-    ui.check('delete confirmation remains available after requesting a download', data['confirm'], data)
+    # Download clears optimistically: the anchor cannot see the denial, so the
+    # text goes and Undo is the only thing standing between the user and a lost
+    # meeting. That makes the recovery bar load-bearing, not decorative.
+    ui.check('a denied download still leaves the text recoverable', data['undo'], data)
+    ui.check('download feedback does not claim the file reached disk',
+             'requested' in data['announcement'].lower()
+             and 'check' in data['announcement'].lower(), data)
+    ui.check('and it says the transcript was cleared, so the loss is not a surprise',
+             'cleared' in data['announcement'].lower(), data)
+
+    ui.js("document.getElementById('undoClearBtn').click()")
+    time.sleep(.3)
+    back = state(ui)
+    ui.check('Undo restores every row after a download that never arrived',
+             back['segs'] == 3, back)
+    ui.check('the restored transcript is marked unsaved again', back['unsaved'], back)
 
 
 def output_errors(ui):
